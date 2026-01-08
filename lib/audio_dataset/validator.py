@@ -1,246 +1,259 @@
 """
-Transcription validation logic for detecting invalid transcriptions.
+Transcription validation for detecting invalid/low-quality transcriptions.
+
+Filters out instrumental tracks, musical content, and repetitive transcriptions
+using n-gram analysis and pattern matching.
 """
+
 import re
+from typing import Dict, List
 from nltk.tokenize import word_tokenize
 from nltk.util import ngrams
 from collections import Counter
 import nltk
 
-nltk.download('punkt_tab')
+nltk.download('punkt_tab', quiet=True)
 
 
 class TranscriptionValidator:
     """
-    Enhanced transcription validator for detecting invalid transcriptions
+    Validates transcription quality for filtering invalid content.
+    
+    Detects:
+    - Empty/too short transcriptions
+    - Musical content (instrumental tracks)
+    - Excessive repetition (n-gram analysis)
+    - Repeated phrases
+    
+    Args:
+        min_words: Minimum word count
+        max_repetition_ratio: Max ratio of repeated n-grams (0.0-1.0)
+        min_unique_bigrams: Min unique bigrams required
+        min_unique_trigrams: Min unique trigrams required
+    
+    Example:
+        >>> validator = TranscriptionValidator(min_words=10, max_repetition_ratio=0.6)
+        >>> is_valid = validator.is_valid_transcription(text)
     """
     
-    def __init__(self, min_words=10, max_repetition_ratio=0.7, min_unique_bigrams=3, min_unique_trigrams=2):
-        """
-        Initialize validator with configurable thresholds
-        
-        Args:
-            min_words: Minimum number of words required
-            max_repetition_ratio: Maximum ratio of repeated n-grams (0.7 = 70%)
-            min_unique_bigrams: Minimum number of unique bigrams required
-            min_unique_trigrams: Minimum number of unique trigrams required
-        """
+    def __init__(
+        self,
+        min_words: int = 10,
+        max_repetition_ratio: float = 0.7,
+        min_unique_bigrams: int = 3,
+        min_unique_trigrams: int = 2
+    ) -> None:
         self.min_words = min_words
         self.max_repetition_ratio = max_repetition_ratio
         self.min_unique_bigrams = min_unique_bigrams
         self.min_unique_trigrams = min_unique_trigrams
     
     def clean_text(self, text: str) -> str:
-        """Clean and normalize text for analysis"""
+        """
+        Clean and normalize text.
+        
+        Removes: timestamps, annotations, excessive fillers, extra whitespace
+        
+        Args:
+            text: Raw transcription text
+        
+        Returns:
+            Cleaned text
+        """
         if not text or not isinstance(text, str):
             return ""
         
-        # Convert to lowercase
         text = text.lower()
         
         # Remove timestamps and annotations
-        text = re.sub(r'\[\d+:\d+\]', '', text)  # Remove [mm:ss] timestamps
-        text = re.sub(r'\(.*?\)', '', text)      # Remove parenthetical annotations
-        text = re.sub(r'\[.*?\]', '', text)      # Remove bracketed annotations
+        text = re.sub(r'\[\d+:\d+\]', '', text)
+        text = re.sub(r'\(.*?\)', '', text)
+        text = re.sub(r'\[.*?\]', '', text)
         
-        # Remove excessive filler words
-        excessive_fillers = r'\b(um|uh|ah|hmm|er|eh|mm)\b'
-        text = re.sub(excessive_fillers, ' ', text)
+        # Remove excessive fillers
+        text = re.sub(r'\b(um|uh|ah|hmm|er|eh|mm)\b', ' ', text)
         
-        # Clean up punctuation but preserve apostrophes
+        # Clean punctuation (preserve apostrophes)
         text = re.sub(r"[^\w\s']", ' ', text)
-        
-        # Remove extra whitespace
         text = re.sub(r'\s+', ' ', text).strip()
         
         return text
     
     def is_empty_or_too_short(self, text: str) -> bool:
-        """Check if text is empty or too short"""
-        cleaned_text = self.clean_text(text)
-        if not cleaned_text:
+        """Check if text is empty or below minimum word count."""
+        cleaned = self.clean_text(text)
+        if not cleaned:
             return True
         
         try:
-            words = word_tokenize(cleaned_text)
-            return len(words) < self.min_words
+            words = word_tokenize(cleaned)
         except:
-            # If tokenization fails, use simple split
-            words = cleaned_text.split()
-            return len(words) < self.min_words
+            words = cleaned.split()
+        
+        return len(words) < self.min_words
     
     def is_only_symbols(self, text: str) -> bool:
-        """Check if text contains only symbols/punctuation"""
+        """Check if text contains only symbols/punctuation (<5 alphanumeric chars)."""
         if not text or not isinstance(text, str):
             return True
         
-        # Remove whitespace and check if anything remains
-        text_no_space = re.sub(r'\s+', '', text)
-        if not text_no_space:
-            return True
-        
-        # Check if text contains only punctuation and symbols
-        # Keep only alphanumeric characters and check if any remain
-        alphanumeric_only = re.sub(r'[^a-zA-Z0-9]', '', text)
-        
-        # If less than 5 alphanumeric characters, consider it only symbols
-        return len(alphanumeric_only) < 5
+        alphanumeric = re.sub(r'[^a-zA-Z0-9]', '', text)
+        return len(alphanumeric) < 5
     
     def is_musical_content(self, text: str) -> bool:
         """
-        Check if text contains primarily musical content that should be filtered out
+        Detect musical content that should be filtered.
+        
+        Checks for:
+        - Musical notation symbols
+        - Musical annotations ([music], [instrumental], etc.)
+        - Repetitive musical patterns (la la la, na na na, etc.)
+        - High ratio of musical syllables
+        
+        Args:
+            text: Transcription text
+        
+        Returns:
+            True if primarily musical content
         """
         if not text or not isinstance(text, str):
             return False
         
-        # Convert to lowercase for pattern matching
         text_lower = text.lower()
         
-        # Musical notation symbols (Unicode musical symbols)
+        # Musical symbols
         musical_symbols = r'[♪♫♬♩♭♮♯𝄞𝄢𝄪𝄫]'
-        
-        # Common musical annotations that Whisper might produce
-        musical_annotations = [
-            r'\(music\s*playing\)',
-            r'\[music\]',
-            r'\(music\)',
-            r'\[music\s*playing\]',
-            r'\(instrumental\)',
-            r'\[instrumental\]',
-            r'\(singing\)',
-            r'\[singing\]',
-            r'\(humming\)',
-            r'\[humming\]',
-            r'\(whistling\)',
-            r'\[whistling\]',
-            r'\(melody\)',
-            r'\[melody\]',
-            r'\(musical\s*interlude\)',
-            r'\[musical\s*interlude\]'
-        ]
-        
-        # Check for musical symbols
         if re.search(musical_symbols, text):
-            # If text is mostly musical symbols, consider it musical content
             text_no_symbols = re.sub(musical_symbols, '', text)
-            text_no_space = re.sub(r'\s+', '', text_no_symbols)
-            if len(text_no_space) < 10:  # Very little non-musical content
+            if len(re.sub(r'\s+', '', text_no_symbols)) < 10:
                 return True
         
-        # Check for musical annotations
+        # Musical annotations
+        musical_annotations = [
+            r'\(music\s*playing\)', r'\[music\]', r'\(music\)',
+            r'\[instrumental\]', r'\(instrumental\)',
+            r'\[singing\]', r'\(singing\)',
+            r'\[humming\]', r'\(humming\)',
+            r'\[melody\]', r'\(melody\)'
+        ]
+        
         for pattern in musical_annotations:
             if re.search(pattern, text_lower):
                 return True
         
-        # Check if text is primarily "la la la", "na na na", etc.
-        repetitive_musical_patterns = [
-            r'\b(la\s+){3,}',           # "la la la la..."
-            r'\b(na\s+){3,}',           # "na na na na..."
-            r'\b(da\s+){3,}',           # "da da da da..."
-            r'\b(tra\s+){3,}',          # "tra tra tra tra..."
-            r'\b(do\s+){3,}',           # "do do do do..."
-            r'\b(re\s+){3,}',           # "re re re re..."
-            r'\b(mi\s+){3,}',           # "mi mi mi mi..."
-            r'\b(fa\s+){3,}',           # "fa fa fa fa..."
-            r'\b(so\s+){3,}',           # "so so so so..."
-            r'\b(ti\s+){3,}',           # "ti ti ti ti..."
-            r'\b(doo\s+){3,}',          # "doo doo doo..."
-            r'\b(bah\s+){3,}',          # "bah bah bah..."
+        # Repetitive musical patterns
+        repetitive_patterns = [
+            r'\b(la\s+){3,}', r'\b(na\s+){3,}', r'\b(da\s+){3,}',
+            r'\b(tra\s+){3,}', r'\b(do\s+){3,}', r'\b(doo\s+){3,}'
         ]
         
-        for pattern in repetitive_musical_patterns:
+        for pattern in repetitive_patterns:
             if re.search(pattern, text_lower):
                 return True
         
-        # Check if text is mostly composed of musical syllables
+        # Check ratio of musical syllables
         words = re.findall(r'\b\w+\b', text_lower)
         if words:
-            musical_syllables = {'la', 'na', 'da', 'tra', 'do', 're', 'mi', 'fa', 'so', 'ti', 'doo', 'bah', 'hmm', 'mm'}
-            musical_word_count = sum(1 for word in words if word in musical_syllables)
+            musical_syllables = {
+                'la', 'na', 'da', 'tra', 'do', 're', 'mi', 'fa', 'so', 'ti', 'doo', 'bah'
+            }
+            musical_count = sum(1 for w in words if w in musical_syllables)
             
-            # If more than 70% of words are musical syllables, consider it musical
-            if len(words) >= 3 and (musical_word_count / len(words)) > 0.7:
+            if len(words) >= 3 and (musical_count / len(words)) > 0.7:
                 return True
         
         return False
     
     def has_excessive_repetition(self, text: str) -> bool:
         """
-        Check if text has excessive repetition of bigrams or trigrams
-        This catches cases like "thank you thank you thank you..." repeated
+        Check for excessive n-gram repetition.
+        
+        Uses bigrams and trigrams to detect patterns like:
+        "thank you thank you thank you..."
+        
+        Args:
+            text: Transcription text
+        
+        Returns:
+            True if repetition exceeds thresholds
         """
-        cleaned_text = self.clean_text(text)
-        if not cleaned_text:
+        cleaned = self.clean_text(text)
+        if not cleaned:
             return True
         
         try:
-            words = word_tokenize(cleaned_text)
+            words = word_tokenize(cleaned)
         except:
-            words = cleaned_text.split()
+            words = cleaned.split()
         
-        if len(words) < 4:  # Too short to analyze n-grams meaningfully
+        if len(words) < 4:
             return False
         
         # Check bigrams
-        bigrams = list(ngrams(words, 2))
-        if len(bigrams) >= 2:
-            bigram_counts = Counter(bigrams)
-            most_common_bigram_count = bigram_counts.most_common(1)[0][1]
-            bigram_repetition_ratio = most_common_bigram_count / len(bigrams)
+        bigrams_list = list(ngrams(words, 2))
+        if len(bigrams_list) >= 2:
+            bigram_counts = Counter(bigrams_list)
+            most_common_count = bigram_counts.most_common(1)[0][1]
+            repetition_ratio = most_common_count / len(bigrams_list)
+            unique_bigrams = len(set(bigrams_list))
             
-            # Check if we have too few unique bigrams or too much repetition
-            unique_bigrams = len(set(bigrams))
-            if (unique_bigrams < self.min_unique_bigrams or 
-                bigram_repetition_ratio > self.max_repetition_ratio):
+            if (unique_bigrams < self.min_unique_bigrams or
+                repetition_ratio > self.max_repetition_ratio):
                 return True
         
-        # Check trigrams if we have enough words
+        # Check trigrams
         if len(words) >= 6:
-            trigrams = list(ngrams(words, 3))
-            if len(trigrams) >= 2:
-                trigram_counts = Counter(trigrams)
-                most_common_trigram_count = trigram_counts.most_common(1)[0][1]
-                trigram_repetition_ratio = most_common_trigram_count / len(trigrams)
+            trigrams_list = list(ngrams(words, 3))
+            if len(trigrams_list) >= 2:
+                trigram_counts = Counter(trigrams_list)
+                most_common_count = trigram_counts.most_common(1)[0][1]
+                repetition_ratio = most_common_count / len(trigrams_list)
+                unique_trigrams = len(set(trigrams_list))
                 
-                # Check if we have too few unique trigrams or too much repetition
-                unique_trigrams = len(set(trigrams))
-                if (unique_trigrams < self.min_unique_trigrams or 
-                    trigram_repetition_ratio > self.max_repetition_ratio):
+                if (unique_trigrams < self.min_unique_trigrams or
+                    repetition_ratio > self.max_repetition_ratio):
                     return True
         
         return False
     
     def has_repeated_phrases(self, text: str) -> bool:
         """
-        Check for repeated phrases that might indicate transcription errors
+        Check for repeated phrases (>50% identical sentences).
+        
+        Args:
+            text: Transcription text
+        
+        Returns:
+            True if excessive phrase repetition detected
         """
-        cleaned_text = self.clean_text(text)
-        if not cleaned_text:
+        cleaned = self.clean_text(text)
+        if not cleaned:
             return True
         
-        # Split into sentences or chunks
-        sentences = re.split(r'[.!?]+', cleaned_text)
+        sentences = re.split(r'[.!?]+', cleaned)
         sentences = [s.strip() for s in sentences if s.strip()]
         
         if len(sentences) < 2:
             return False
         
-        # Check for identical or very similar sentences
         sentence_counts = Counter(sentences)
-        total_sentences = len(sentences)
+        total = len(sentences)
         
         for sentence, count in sentence_counts.items():
-            if count / total_sentences > 0.5:  # More than 50% are the same sentence
+            if count / total > 0.5:
                 return True
         
         return False
     
     def is_valid_transcription(self, text: str) -> bool:
         """
-        Main validation function that combines all checks
+        Main validation function combining all checks.
+        
+        Args:
+            text: Transcription text to validate
         
         Returns:
-            bool: True if transcription is valid, False otherwise
+            True if transcription passes all checks
         """
         if self.is_empty_or_too_short(text):
             return False
@@ -259,12 +272,19 @@ class TranscriptionValidator:
         
         return True
     
-    def get_validation_details(self, text: str) -> dict:
+    def get_validation_details(self, text: str) -> Dict[str, any]:
         """
-        Get detailed validation results for debugging
+        Get detailed validation results for debugging.
+        
+        Args:
+            text: Transcription text
         
         Returns:
-            dict: Dictionary with validation details
+            Dict with validation details:
+                - is_valid: bool
+                - issues: List[str]
+                - text_length: int
+                - cleaned_text: str
         """
         details = {
             'is_valid': True,
