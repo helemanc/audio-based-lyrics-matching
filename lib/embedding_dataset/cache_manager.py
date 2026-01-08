@@ -1,21 +1,39 @@
 """
-Cache management methods extracted from original EmbeddingDataset.
+Cache management for embeddings datasets.
+
+Handles loading and saving processed dataset structures to disk for fast
+initialization on subsequent runs.
 """
+
 import pickle
-import torch
 from pathlib import Path
-import os
+from typing import Optional, Dict, Any
 
 
 class CacheManager:
-    """Handles cache loading and saving"""
+    """
+    Manages cache loading and saving for processed datasets.
     
-    def __init__(self, dataset, verbose=True):
+    Cache stores: info dict, splitdict, clique2id mappings
+    
+    Args:
+        dataset: Parent EmbeddingDataset instance
+        verbose: Print cache operations
+    """
+    
+    def __init__(self, dataset: Any, verbose: bool = True) -> None:
         self.dataset = dataset
         self.verbose = verbose
     
-    def _get_cache_path(self):
-        """Get the cache file path for the processed dataset"""
+    def _get_cache_path(self) -> Optional[Path]:
+        """
+        Get cache file path for processed dataset.
+        
+        Cache ID includes: embedding_type, embedding_format, debug flag
+        
+        Returns:
+            Path to cache file or None if working_dir not configured
+        """
         cache_dir = None
         if hasattr(self.dataset.conf.path, 'cache'):
             cache_dir = Path(self.dataset.conf.path.cache) / self.dataset.dataset_nickname
@@ -24,6 +42,7 @@ class CacheManager:
         else:
             return None
         
+        # Build cache ID
         if self.dataset.embedding_type == 'multimodal':
             cache_id = "multimodal"
         else:
@@ -35,8 +54,15 @@ class CacheManager:
         cache_file = cache_dir / f'processed_dataset_{cache_id}.pkl'
         return cache_file
     
-    def _load_from_cache(self):
-        """Load complete processed dataset from cache if available"""
+    def _load_from_cache(self) -> bool:
+        """
+        Load processed dataset from cache.
+        
+        Populates: info, splitdict, clique2id
+        
+        Returns:
+            True if cache loaded successfully, False otherwise
+        """
         cache_file = self._get_cache_path()
         
         if not cache_file or not cache_file.exists():
@@ -44,7 +70,7 @@ class CacheManager:
         
         try:
             if self.verbose:
-                print(f"Loading processed dataset from cache: {cache_file}")
+                print(f"Loading from cache: {cache_file}")
             
             with open(cache_file, 'rb') as f:
                 cached_data = pickle.load(f)
@@ -55,28 +81,32 @@ class CacheManager:
             self.dataset._loaded_from_cache = True
             
             if self.verbose:
-                total_versions = len(self.dataset.info)
-                print(f"Loaded processed dataset with {total_versions} versions")
+                total = len(self.dataset.info)
+                print(f"Loaded {total} versions from cache")
                 for split_name, split_data in self.dataset.splitdict.items():
-                    clique_count = len(split_data)
-                    version_count = sum(len(versions) for versions in split_data.values())
-                    print(f"  {split_name}: {clique_count} cliques, {version_count} versions")
+                    cliques = len(split_data)
+                    versions = sum(len(v) for v in split_data.values())
+                    print(f"  {split_name}: {cliques} cliques, {versions} versions")
             
             return True
             
         except Exception as e:
             if self.verbose:
-                print(f"Error loading cache file {cache_file}: {e}")
-                print("Will rebuild dataset...")
+                print(f"Error loading cache: {e}")
+                print("Rebuilding dataset...")
             return False
     
-    def _save_to_cache(self):
-        """Save the final processed dataset to cache"""
+    def _save_to_cache(self) -> None:
+        """
+        Save processed dataset to cache.
+        
+        Saves: info, splitdict, clique2id, embedding_type, embedding_format
+        """
         cache_file = self._get_cache_path()
         
         if not cache_file:
             if self.verbose:
-                print("Warning: Cannot save to cache - working_dir not configured")
+                print("Warning: Cannot save cache - working_dir not configured")
             return
         
         try:
@@ -94,8 +124,8 @@ class CacheManager:
                 pickle.dump(cache_data, f)
             
             if self.verbose:
-                print(f"✓ Saved processed dataset to cache: {cache_file}")
+                print(f"✓ Saved to cache: {cache_file}")
                 
         except Exception as e:
             if self.verbose:
-                print(f"Warning: Could not save to cache {cache_file}: {e}")
+                print(f"Warning: Could not save cache: {e}")

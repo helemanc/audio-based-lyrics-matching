@@ -1,22 +1,53 @@
 """
-Multimodal dataset classes for WEALY+CLEWS and Whisper+CLEWS.
+Multimodal embedding datasets for version identification.
+
+Provides datasets combining multiple embedding types:
+- WEALY+CLEWS: Concatenated lyrics embeddings + audio embeddings
+- Whisper+CLEWS: Transcription embeddings + audio embeddings
 """
+
 import torch
 from pathlib import Path
+from typing import Dict, Tuple, Optional, Any, List
+import os
+
 from .base_dataset import EmbeddingDataset
 from .utils import create_deterministic_song_id
+from . import data_processing
 
 
 class MultimodalEmbeddingDataset_WEALYCLEWS(EmbeddingDataset):
     """
-    Dataset class to handle WEALY concatenated + CLEWS embeddings
-    Returns: wealy_concat, full_clews, avg_clews, clews_mask
+    Dataset combining WEALY concatenated embeddings and CLEWS audio embeddings.
+    
+    Returns for each version:
+        - wealy_concat: Dict with embeddings, chunk_info
+        - full_clews: Full CLEWS embedding (116, 2048)
+        - avg_clews: Averaged CLEWS embedding (2048,)
+        - clews_mask: Mask for valid CLEWS positions
+    
+    Example:
+        >>> dataset = MultimodalEmbeddingDataset_WEALYCLEWS(conf, split='train')
+        >>> sample = dataset[0]
+        >>> clique_id, ver_id, multimodal_emb = sample[0], sample[1], sample[2]
+        >>> wealy = multimodal_emb['wealy']
+        >>> clews = multimodal_emb['full_clews']
     """
     
-    def __init__(self, conf, split, augment=False, verbose=False):
+    def __init__(self, conf: Any, split: str, augment: bool = False, 
+                 verbose: bool = False) -> None:
+        """
+        Initialize WEALY+CLEWS multimodal dataset.
+        
+        Args:
+            conf: Configuration object
+            split: 'train', 'val', or 'test'
+            augment: Apply augmentation
+            verbose: Print progress
+        """
         super().__init__(
-            conf=conf, 
-            split=split, 
+            conf=conf,
+            split=split,
             augment=augment,
             embedding_type="multimodal_wealy_clews",
             embedding_format="all",
@@ -24,45 +55,57 @@ class MultimodalEmbeddingDataset_WEALYCLEWS(EmbeddingDataset):
         )
         self.ensure_version_alignment()
     
-    def _get_required_embedding_filename(self):
-        """Override to return special marker for verification"""
+    def _get_required_embedding_filename(self) -> str:
+        """Return special marker for multimodal verification."""
         return "MULTIMODAL_WEALY_CLEWS_CONCAT"
     
-    def verify_embeddings_exist(self):
-        """Verify that WEALY concat, full CLEWS, avg CLEWS, and masks exist"""
+    def verify_embeddings_exist(self) -> bool:
+        """
+        Verify WEALY concat, full CLEWS, avg CLEWS, and masks exist.
+        
+        Returns:
+            True if all required embeddings exist
+        """
         if self.verbose:
-            print("Verifying WEALY concat + full CLEWS + avg CLEWS + masks exist...")
+            print("Verifying WEALY concat + CLEWS embeddings...")
         
         hidden_states_path = Path(self.conf.path.hidden_states)
-        all_good = True
-        missing_embeddings = []
+        required_files = [
+            "hs_wealy_concat.pt",
+            "hs_clews.pt",
+            "hs_clews_avg.pt",
+            "hs_clews_mask.pt"
+        ]
         
+        all_good = True
         for split_name in ["train", "val", "test"]:
             missing = []
             for clique_id, versions in self.splitdict[split_name].items():
                 for version in versions:
-                    has_wealy_concat = self.verifier._embedding_exists(version, hidden_states_path, "hs_wealy_concat.pt")
-                    has_full_clews = self.verifier._embedding_exists(version, hidden_states_path, "hs_clews.pt")
-                    has_avg_clews = self.verifier._embedding_exists(version, hidden_states_path, "hs_clews_avg.pt")
-                    has_clews_mask = self.verifier._embedding_exists(version, hidden_states_path, "hs_clews_mask.pt")
+                    # Check all required files exist
+                    all_exist = all(
+                        data_processing.check_embedding_exists(
+                            self.dataset_name, str(hidden_states_path), version, fname
+                        )
+                        for fname in required_files
+                    )
                     
-                    if not (has_wealy_concat and has_full_clews and has_avg_clews and has_clews_mask):
+                    if not all_exist:
                         missing.append(version)
-                        missing_embeddings.append((split_name, version))
             
             if missing:
                 all_good = False
                 if self.verbose:
-                    print(f"  {split_name}: {len(missing)} versions missing embeddings")
+                    print(f"  {split_name}: {len(missing)} missing embeddings")
             else:
+                total = sum(len(v) for v in self.splitdict[split_name].values())
                 if self.verbose:
-                    total = sum(len(v) for v in self.splitdict[split_name].values())
                     print(f"  {split_name}: ✓ All {total} versions have embeddings")
         
         return all_good
     
-    def ensure_version_alignment(self):
-        """Build alignment with deterministic IDs"""
+    def ensure_version_alignment(self) -> None:
+        """Build version alignment with deterministic IDs."""
         aligned_data = []
         for version_key in self.versions:
             if version_key in self.info:
@@ -77,11 +120,10 @@ class MultimodalEmbeddingDataset_WEALYCLEWS(EmbeddingDataset):
         for det_id, version_key in aligned_data:
             self.info[version_key]['id'] = det_id
     
-    def load_multimodal_embeddings(self, version):
-        """Load WEALY concat + full CLEWS + avg CLEWS + clews mask"""
+    def _get_version_folder(self, version: str) -> Path:
+        """Get folder path for version's embeddings."""
         hidden_states_path = Path(self.conf.path.hidden_states)
         
-        # Get version folder path
         if self.dataset_name == 'shs':
             set_id, ver_id = version.split('-')
             set_id_int = int(set_id)
@@ -91,39 +133,50 @@ class MultimodalEmbeddingDataset_WEALYCLEWS(EmbeddingDataset):
                 folder_name = set_id
             else:
                 folder_name = set_id[:2]
-            version_folder = hidden_states_path / folder_name / version
+            return hidden_states_path / folder_name / version
+        
         elif self.dataset_name == 'lyric-covers':
-            version_folder = hidden_states_path / version
+            return hidden_states_path / version
+        
         elif self.dataset_name == 'discogs-vi':
-            import os
-            version_folder = hidden_states_path / version.replace('/', os.sep)
-        else:
-            return None, None, None, None
+            return hidden_states_path / version.replace('/', os.sep)
         
-        # Load embedding files
-        wealy_concat_path = version_folder / "hs_wealy_concat.pt"
-        full_clews_path = version_folder / "hs_clews.pt"
-        avg_clews_path = version_folder / "hs_clews_avg.pt"
-        clews_mask_path = version_folder / "hs_clews_mask.pt"
+        return hidden_states_path
+    
+    def load_multimodal_embeddings(
+        self, version: str
+    ) -> Tuple[Dict, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Load WEALY concat + full CLEWS + avg CLEWS + mask.
         
-        # Load WEALY concatenated format
+        Args:
+            version: Version identifier
+        
+        Returns:
+            Tuple of (wealy_concat_dict, full_clews, avg_clews, clews_mask)
+            Falls back to dummy embeddings if files missing
+        """
+        version_folder = self._get_version_folder(version)
+        
+        # Load WEALY concatenated
+        wealy_path = version_folder / "hs_wealy_concat.pt"
         try:
-            wealy_concat_data = torch.load(wealy_concat_path, map_location='cpu')
+            wealy_data = torch.load(wealy_path, map_location='cpu')
             
-            if isinstance(wealy_concat_data, dict) and 'embeddings' in wealy_concat_data:
-                wealy_concat = wealy_concat_data
+            if isinstance(wealy_data, dict) and 'embeddings' in wealy_data:
+                wealy_concat = wealy_data
                 if wealy_concat['embeddings'].dtype == torch.float16:
                     wealy_concat['embeddings'] = wealy_concat['embeddings'].float()
             else:
-                if wealy_concat_data.dtype == torch.float16:
-                    wealy_concat_data = wealy_concat_data.float()
+                # Legacy format
+                if wealy_data.dtype == torch.float16:
+                    wealy_data = wealy_data.float()
                 
                 wealy_concat = {
-                    'embeddings': wealy_concat_data,
-                    'chunk_info': {'total_chunks': wealy_concat_data.shape[0] if wealy_concat_data.dim() > 1 else 1},
+                    'embeddings': wealy_data,
+                    'chunk_info': {'total_chunks': wealy_data.shape[0] if wealy_data.dim() > 1 else 1},
                     'extraction_method': 'legacy_format'
                 }
-                
         except Exception as e:
             wealy_concat = {
                 'embeddings': torch.zeros(10, self.conf.model.zdim),
@@ -131,53 +184,68 @@ class MultimodalEmbeddingDataset_WEALYCLEWS(EmbeddingDataset):
                 'extraction_method': 'dummy'
             }
             if self.verbose:
-                print(f"Using dummy WEALY concat for {version}: {e}")
+                print(f"Using dummy WEALY for {version}: {e}")
         
         # Load full CLEWS
+        clews_path = version_folder / "hs_clews.pt"
         try:
-            full_clews_emb = torch.load(full_clews_path, map_location='cpu')
-            if full_clews_emb.dtype == torch.float16:
-                full_clews_emb = full_clews_emb.float()
+            full_clews = torch.load(clews_path, map_location='cpu')
+            if full_clews.dtype == torch.float16:
+                full_clews = full_clews.float()
         except:
-            full_clews_emb = torch.zeros(116, 2048)
+            full_clews = torch.zeros(116, 2048)
             if self.verbose:
                 print(f"Using dummy full CLEWS for {version}")
         
         # Load avg CLEWS
+        avg_path = version_folder / "hs_clews_avg.pt"
         try:
-            avg_clews_emb = torch.load(avg_clews_path, map_location='cpu')
-            if avg_clews_emb.dtype == torch.float16:
-                avg_clews_emb = avg_clews_emb.float()
+            avg_clews = torch.load(avg_path, map_location='cpu')
+            if avg_clews.dtype == torch.float16:
+                avg_clews = avg_clews.float()
         except:
-            avg_clews_emb = torch.zeros(2048)
+            avg_clews = torch.zeros(2048)
             if self.verbose:
                 print(f"Using dummy avg CLEWS for {version}")
         
-        # Load CLEWS mask
+        # Load mask
+        mask_path = version_folder / "hs_clews_mask.pt"
         try:
-            clews_mask = torch.load(clews_mask_path, map_location='cpu')
+            clews_mask = torch.load(mask_path, map_location='cpu')
         except:
             clews_mask = torch.ones(116, dtype=torch.bool)
             if self.verbose:
                 print(f"Using dummy CLEWS mask for {version}")
         
-        return wealy_concat, full_clews_emb, avg_clews_emb, clews_mask
+        return wealy_concat, full_clews, avg_clews, clews_mask
     
-    def __getitem__(self, idx):
-        """Get item with wealy_concat + full_clews + avg_clews + clews_mask"""
+    def __getitem__(self, idx: int) -> List[Any]:
+        """
+        Get multimodal sample.
+        
+        Args:
+            idx: Sample index
+        
+        Returns:
+            List: [clique_id, ver_id_1, multimodal_dict_1, ver_id_2, multimodal_dict_2, ...]
+            Each multimodal_dict contains: wealy, full_clews, avg_clews, clews_mask
+        """
         v1 = self.versions[idx]
         i1 = self.info[v1]["id"]
         cl = self.info[v1]["clique"]
         icl = self.clique2id[cl]
         
-        # Get other versions from same clique
-        otherversions = [v for v in self.clique[cl] 
-                        if v != v1 or torch.rand(1).item() < getattr(self, 'p_samesong', 0.0)]
+        # Get other versions
+        otherversions = [
+            v for v in self.clique[cl]
+            if v != v1 or torch.rand(1).item() < getattr(self, 'p_samesong', 0.0)
+        ]
         
         if getattr(self, 'augment', False):
-            otherversions = [otherversions[k] for k in torch.randperm(len(otherversions)).tolist()]
+            perm = torch.randperm(len(otherversions)).tolist()
+            otherversions = [otherversions[k] for k in perm]
         
-        # Construct version array
+        # Sample versions
         n_per_class = getattr(self, 'n_per_class', 2)
         v_n = [v1]
         i_n = [i1]
@@ -189,31 +257,54 @@ class MultimodalEmbeddingDataset_WEALYCLEWS(EmbeddingDataset):
         # Load embeddings
         output = [icl]
         for i, v in zip(i_n, v_n):
-            wealy_concat, full_clews_emb, avg_clews_emb, clews_mask = self.load_multimodal_embeddings(v)
+            wealy, full_clews, avg_clews, clews_mask = self.load_multimodal_embeddings(v)
             
-            multimodal_embedding = {
-                'wealy': wealy_concat,
-                'full_clews': full_clews_emb,
-                'avg_clews': avg_clews_emb,
+            multimodal_emb = {
+                'wealy': wealy,
+                'full_clews': full_clews,
+                'avg_clews': avg_clews,
                 'clews_mask': clews_mask,
                 'song_id': v,
                 'class_id': icl
             }
-            output += [i, multimodal_embedding]
+            output.extend([i, multimodal_emb])
         
         return output
 
 
 class MultimodalEmbeddingDataset_WHISPERCLEWS(EmbeddingDataset):
     """
-    Dataset class to handle Whisper + CLEWS embeddings 
-    Returns: hs_last_seq, whisper_mask, full_clews, avg_clews, clews_mask
+    Dataset combining Whisper transcription embeddings and CLEWS audio embeddings.
+    
+    Returns for each version:
+        - whisper: Whisper hs_last_seq embedding (seq_len, 1280)
+        - whisper_mask: Mask for Whisper sequence
+        - full_clews: Full CLEWS embedding (16, 2048)
+        - avg_clews: Averaged CLEWS embedding (2048,)
+        - clews_mask: Mask for valid CLEWS positions
+    
+    Example:
+        >>> dataset = MultimodalEmbeddingDataset_WHISPERCLEWS(conf, split='train')
+        >>> sample = dataset[0]
+        >>> multimodal_emb = sample[2]  # First version's embeddings
+        >>> whisper = multimodal_emb['whisper']
+        >>> clews = multimodal_emb['full_clews']
     """
     
-    def __init__(self, conf, split, augment=False, verbose=False):
+    def __init__(self, conf: Any, split: str, augment: bool = False,
+                 verbose: bool = False) -> None:
+        """
+        Initialize Whisper+CLEWS multimodal dataset.
+        
+        Args:
+            conf: Configuration object
+            split: 'train', 'val', or 'test'
+            augment: Apply augmentation
+            verbose: Print progress
+        """
         super().__init__(
-            conf=conf, 
-            split=split, 
+            conf=conf,
+            split=split,
             augment=augment,
             embedding_type="multimodal_whisper_clews",
             embedding_format="all",
@@ -221,45 +312,56 @@ class MultimodalEmbeddingDataset_WHISPERCLEWS(EmbeddingDataset):
         )
         self.ensure_version_alignment()
     
-    def _get_required_embedding_filename(self):
-        """Override to return special marker for verification"""
+    def _get_required_embedding_filename(self) -> str:
+        """Return special marker for multimodal verification."""
         return "MULTIMODAL_WHISPER_CLEWS_ALL"
     
-    def verify_embeddings_exist(self):
-        """Verify that Whisper hs_last_seq, full CLEWS, avg CLEWS, and masks exist"""
+    def verify_embeddings_exist(self) -> bool:
+        """
+        Verify Whisper, full CLEWS, avg CLEWS, and masks exist.
+        
+        Returns:
+            True if all required embeddings exist
+        """
         if self.verbose:
-            print("Verifying Whisper hs_last_seq + full CLEWS + avg CLEWS + masks exist...")
+            print("Verifying Whisper + CLEWS embeddings...")
         
         hidden_states_path = Path(self.conf.path.hidden_states)
-        all_good = True
-        missing_embeddings = []
+        required_files = [
+            "hs_last_seq.pt",
+            "hs_clews.pt",
+            "hs_clews_avg.pt",
+            "hs_clews_mask.pt"
+        ]
         
+        all_good = True
         for split_name in ["train", "val", "test"]:
             missing = []
             for clique_id, versions in self.splitdict[split_name].items():
                 for version in versions:
-                    has_whisper = self.verifier._embedding_exists(version, hidden_states_path, "hs_last_seq.pt")
-                    has_full_clews = self.verifier._embedding_exists(version, hidden_states_path, "hs_clews.pt")
-                    has_avg_clews = self.verifier._embedding_exists(version, hidden_states_path, "hs_clews_avg.pt")
-                    has_clews_mask = self.verifier._embedding_exists(version, hidden_states_path, "hs_clews_mask.pt")
+                    all_exist = all(
+                        data_processing.check_embedding_exists(
+                            self.dataset_name, str(hidden_states_path), version, fname
+                        )
+                        for fname in required_files
+                    )
                     
-                    if not (has_whisper and has_full_clews and has_avg_clews and has_clews_mask):
+                    if not all_exist:
                         missing.append(version)
-                        missing_embeddings.append((split_name, version))
             
             if missing:
                 all_good = False
                 if self.verbose:
-                    print(f"  {split_name}: {len(missing)} versions missing embeddings")
+                    print(f"  {split_name}: {len(missing)} missing embeddings")
             else:
+                total = sum(len(v) for v in self.splitdict[split_name].values())
                 if self.verbose:
-                    total = sum(len(v) for v in self.splitdict[split_name].values())
                     print(f"  {split_name}: ✓ All {total} versions have embeddings")
         
         return all_good
     
-    def ensure_version_alignment(self):
-        """Build alignment with deterministic IDs"""
+    def ensure_version_alignment(self) -> None:
+        """Build version alignment with deterministic IDs."""
         aligned_data = []
         for version_key in self.versions:
             if version_key in self.info:
@@ -274,11 +376,10 @@ class MultimodalEmbeddingDataset_WHISPERCLEWS(EmbeddingDataset):
         for det_id, version_key in aligned_data:
             self.info[version_key]['id'] = det_id
     
-    def load_multimodal_embeddings(self, version):
-        """Load Whisper hs_last_seq + full CLEWS + avg CLEWS + clews mask"""
+    def _get_version_folder(self, version: str) -> Path:
+        """Get folder path for version's embeddings."""
         hidden_states_path = Path(self.conf.path.hidden_states)
         
-        # Get version folder path
         if self.dataset_name == 'shs':
             set_id, ver_id = version.split('-')
             set_id_int = int(set_id)
@@ -288,78 +389,104 @@ class MultimodalEmbeddingDataset_WHISPERCLEWS(EmbeddingDataset):
                 folder_name = set_id
             else:
                 folder_name = set_id[:2]
-            version_folder = hidden_states_path / folder_name / version
+            return hidden_states_path / folder_name / version
+        
         elif self.dataset_name == 'lyric-covers':
-            version_folder = hidden_states_path / version
+            return hidden_states_path / version
+        
         elif self.dataset_name == 'discogs-vi':
-            import os
-            version_folder = hidden_states_path / version.replace('/', os.sep)
-        else:
-            return None, None, None, None, None
+            return hidden_states_path / version.replace('/', os.sep)
         
-        # Load embedding files
+        return hidden_states_path
+    
+    def load_multimodal_embeddings(
+        self, version: str
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Load Whisper + full CLEWS + avg CLEWS + masks.
+        
+        Args:
+            version: Version identifier
+        
+        Returns:
+            Tuple of (whisper, whisper_mask, full_clews, avg_clews, clews_mask)
+            Falls back to dummy embeddings if files missing
+        """
+        version_folder = self._get_version_folder(version)
+        
+        # Load Whisper
         whisper_path = version_folder / "hs_last_seq.pt"
-        full_clews_path = version_folder / "hs_clews.pt"
-        avg_clews_path = version_folder / "hs_clews_avg.pt"
-        clews_mask_path = version_folder / "hs_clews_mask.pt"
-        
-        # Load Whisper hs_last_seq
         try:
-            whisper_emb = torch.load(whisper_path, map_location='cpu')
-            if whisper_emb.dtype == torch.float16:
-                whisper_emb = whisper_emb.float()
-            whisper_mask = torch.ones(whisper_emb.shape[0], dtype=torch.bool)
+            whisper = torch.load(whisper_path, map_location='cpu')
+            if whisper.dtype == torch.float16:
+                whisper = whisper.float()
+            whisper_mask = torch.ones(whisper.shape[0], dtype=torch.bool)
         except:
-            whisper_emb = torch.zeros(15, 1280)
+            whisper = torch.zeros(15, 1280)
             whisper_mask = torch.ones(15, dtype=torch.bool)
             if self.verbose:
                 print(f"Using dummy Whisper for {version}")
         
         # Load full CLEWS
+        clews_path = version_folder / "hs_clews.pt"
         try:
-            full_clews_emb = torch.load(full_clews_path, map_location='cpu')
-            if full_clews_emb.dtype == torch.float16:
-                full_clews_emb = full_clews_emb.float()
+            full_clews = torch.load(clews_path, map_location='cpu')
+            if full_clews.dtype == torch.float16:
+                full_clews = full_clews.float()
         except:
-            full_clews_emb = torch.zeros(16, 2048)
+            full_clews = torch.zeros(16, 2048)
             if self.verbose:
                 print(f"Using dummy full CLEWS for {version}")
         
         # Load avg CLEWS
+        avg_path = version_folder / "hs_clews_avg.pt"
         try:
-            avg_clews_emb = torch.load(avg_clews_path, map_location='cpu')
-            if avg_clews_emb.dtype == torch.float16:
-                avg_clews_emb = avg_clews_emb.float()
+            avg_clews = torch.load(avg_path, map_location='cpu')
+            if avg_clews.dtype == torch.float16:
+                avg_clews = avg_clews.float()
         except:
-            avg_clews_emb = torch.zeros(2048)
+            avg_clews = torch.zeros(2048)
             if self.verbose:
                 print(f"Using dummy avg CLEWS for {version}")
         
-        # Load CLEWS mask
+        # Load mask
+        mask_path = version_folder / "hs_clews_mask.pt"
         try:
-            clews_mask = torch.load(clews_mask_path, map_location='cpu')
+            clews_mask = torch.load(mask_path, map_location='cpu')
         except:
             clews_mask = torch.ones(16, dtype=torch.bool)
             if self.verbose:
                 print(f"Using dummy CLEWS mask for {version}")
         
-        return whisper_emb, whisper_mask, full_clews_emb, avg_clews_emb, clews_mask
+        return whisper, whisper_mask, full_clews, avg_clews, clews_mask
     
-    def __getitem__(self, idx):
-        """Get item with whisper + whisper_mask + full_clews + avg_clews + clews_mask"""
+    def __getitem__(self, idx: int) -> List[Any]:
+        """
+        Get multimodal sample.
+        
+        Args:
+            idx: Sample index
+        
+        Returns:
+            List: [clique_id, ver_id_1, multimodal_dict_1, ver_id_2, multimodal_dict_2, ...]
+            Each multimodal_dict contains: whisper, whisper_mask, full_clews, avg_clews, clews_mask
+        """
         v1 = self.versions[idx]
         i1 = self.info[v1]["id"]
         cl = self.info[v1]["clique"]
         icl = self.clique2id[cl]
         
-        # Get other versions from same clique
-        otherversions = [v for v in self.clique[cl] 
-                        if v != v1 or torch.rand(1).item() < getattr(self, 'p_samesong', 0.0)]
+        # Get other versions
+        otherversions = [
+            v for v in self.clique[cl]
+            if v != v1 or torch.rand(1).item() < getattr(self, 'p_samesong', 0.0)
+        ]
         
         if getattr(self, 'augment', False):
-            otherversions = [otherversions[k] for k in torch.randperm(len(otherversions)).tolist()]
+            perm = torch.randperm(len(otherversions)).tolist()
+            otherversions = [otherversions[k] for k in perm]
         
-        # Construct version array
+        # Sample versions
         n_per_class = getattr(self, 'n_per_class', 2)
         v_n = [v1]
         i_n = [i1]
@@ -371,17 +498,17 @@ class MultimodalEmbeddingDataset_WHISPERCLEWS(EmbeddingDataset):
         # Load embeddings
         output = [icl]
         for i, v in zip(i_n, v_n):
-            whisper_emb, whisper_mask, full_clews_emb, avg_clews_emb, clews_mask = self.load_multimodal_embeddings(v)
+            whisper, whisper_mask, full_clews, avg_clews, clews_mask = self.load_multimodal_embeddings(v)
             
-            multimodal_embedding = {
-                'whisper': whisper_emb,
+            multimodal_emb = {
+                'whisper': whisper,
                 'whisper_mask': whisper_mask,
-                'full_clews': full_clews_emb,
-                'avg_clews': avg_clews_emb,
+                'full_clews': full_clews,
+                'avg_clews': avg_clews,
                 'clews_mask': clews_mask,
                 'song_id': v,
                 'class_id': icl
             }
-            output += [i, multimodal_embedding]
+            output.extend([i, multimodal_emb])
         
         return output

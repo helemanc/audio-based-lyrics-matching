@@ -1,31 +1,35 @@
 """
-Embedding dataset module for version identification.
+Embeddings dataset module - simplified structure.
+
+Public API for loading pre-extracted embeddings for version identification.
 """
+
 from .base_dataset import EmbeddingDataset
 from .multimodal_dataset import (
     MultimodalEmbeddingDataset_WEALYCLEWS,
     MultimodalEmbeddingDataset_WHISPERCLEWS
 )
-from .collate_functions import (
-    collate_embeddings_fixed_length,
-    create_collate_fn,
-    load_wealy_with_chunking,
-    handle_wealy_test_mode
-)
-from .utils import create_deterministic_song_id
+from .collate_functions import create_collate_fn, collate_embeddings_fixed_length
+from .cache_manager import CacheManager
+
+# Expose helper modules for advanced usage
+from . import data_processing
+from . import utils
 
 __all__ = [
-    # Dataset classes
+    # Main classes
     'EmbeddingDataset',
     'MultimodalEmbeddingDataset_WEALYCLEWS',
     'MultimodalEmbeddingDataset_WHISPERCLEWS',
     
-    # Collate functions
-    'collate_embeddings_fixed_length',
+    # Collation
     'create_collate_fn',
-    'load_wealy_with_chunking',
-    'handle_wealy_test_mode',
+    'collate_embeddings_fixed_length',
     
-    # Utilities
-    'create_deterministic_song_id',
+    # Cache
+    'CacheManager',
+    
+    # Helper modules
+    'data_processing',
+    'utils',
 ]
