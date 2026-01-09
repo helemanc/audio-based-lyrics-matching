@@ -155,3 +155,4 @@ class NTXentLoss(nn.Module):
         }
         return loss, logdict
 
+
