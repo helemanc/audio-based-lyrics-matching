@@ -553,7 +553,7 @@ audio-based-lyrics-matching/
 
 If you use this code in your research, please cite our paper:
 ```bibtex
-@article{mancini2024wealy,
+@article{mancini2025wealy,
   title={Leveraging Whisper Embeddings for Audio-based Lyrics Matching},
   author={Mancini, Eleonora and Serrà, Joan and Torroni, Paolo and Mitsufuji, Yuki},
   journal={arXiv preprint arXiv:2510.08176},
