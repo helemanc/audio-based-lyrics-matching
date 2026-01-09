@@ -536,7 +536,6 @@ audio-based-lyrics-matching/
 - [ ] **Integrate transcription-based baselines**
   - [ ] TF-IDF similarity on Whisper transcriptions  
   - [ ] SBERT cosine similarity baseline  
-  - [ ] Edit distance (Levenshtein) baseline
 
 - [ ] **Refactor and enable multimodality**
   - [ ] Late fusion strategies
