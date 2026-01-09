@@ -14,6 +14,25 @@ from omegaconf import DictConfig
 
 
 # ============================================================================
+# DISTRIBUTED PRINTING HELPER
+# ============================================================================
+
+def is_main_process() -> bool:
+    """Check if this is the main process (rank 0) in distributed training."""
+    if 'LOCAL_RANK' in os.environ:
+        return int(os.environ['LOCAL_RANK']) == 0
+    if 'RANK' in os.environ:
+        return int(os.environ['RANK']) == 0
+    return True
+
+
+def dist_print(message: str, verbose: bool = True, end: str = '\n') -> None:
+    """Print only from main process."""
+    if verbose and is_main_process():
+        print(message, end=end)
+
+
+# ============================================================================
 # METADATA LOADING
 # ============================================================================
 
@@ -23,13 +42,12 @@ def load_shs_metadata(conf: DictConfig, verbose: bool = True) -> pd.DataFrame:
     
     Args:
         conf: Configuration object with paths
-        verbose: Print loading progress
+        verbose: Print loading progress (only from rank 0)
     
     Returns:
         DataFrame with columns: set_id, ver_id, split, clique_id, version_id
     """
-    if verbose:
-        print("Building metadata from SHS100K CSV files...")
+    dist_print("Building metadata from SHS100K CSV files...", verbose)
     
     shs_df = pd.read_csv(conf.path.shs_data)
     
@@ -73,13 +91,12 @@ def load_lyric_covers_metadata(conf: DictConfig, verbose: bool = True) -> pd.Dat
     
     Args:
         conf: Configuration object with paths
-        verbose: Print loading progress
+        verbose: Print loading progress (only from rank 0)
     
     Returns:
         DataFrame with columns: id, label, split, clique_id, version_id
     """
-    if verbose:
-        print("Building metadata from Lyric Covers CSV files...")
+    dist_print("Building metadata from Lyric Covers CSV files...", verbose)
     
     split_files = {
         "train": "train_no_dup.csv",
@@ -107,13 +124,12 @@ def load_discogs_vi_metadata(conf: DictConfig, verbose: bool = True) -> pd.DataF
     
     Args:
         conf: Configuration object with paths
-        verbose: Print loading progress
+        verbose: Print loading progress (only from rank 0)
     
     Returns:
         DataFrame with columns: split, clique_id, version_id, youtube_id, base_filename
     """
-    if verbose:
-        print("Building metadata from Discogs-VI CSV files...")
+    dist_print("Building metadata from Discogs-VI CSV files...", verbose)
     
     csv_path = os.path.join(conf.path.discogs_vi_data, "id-to-file-mapping.csv")
     df = pd.read_csv(csv_path, names=['split', 'clique_id', 'version_id', 
@@ -133,7 +149,7 @@ def load_metadata(dataset_name: str, conf: DictConfig,
     Args:
         dataset_name: 'shs', 'lyric-covers', or 'discogs-vi'
         conf: Configuration object
-        verbose: Print loading progress
+        verbose: Print loading progress (only from rank 0)
     
     Returns:
         DataFrame with standardized columns including clique_id, version_id, split
@@ -165,7 +181,7 @@ def build_info_and_splitdict(
     Args:
         df: DataFrame with metadata
         dataset_name: Dataset identifier
-        verbose: Print progress
+        verbose: Print progress (only from rank 0)
     
     Returns:
         Tuple of (info, splitdict):
@@ -338,13 +354,12 @@ def filter_by_audio(
         splitdict: Split to clique to versions mapping
         dataset_name: Dataset identifier
         audio_path: Base path to audio
-        verbose: Print progress
+        verbose: Print progress (only from rank 0)
     
     Returns:
         Filtered splitdict
     """
-    if verbose:
-        print("Filtering by audio availability...")
+    dist_print("Filtering by audio availability...", verbose)
     
     if dataset_name == 'shs':
         audio_base = Path(audio_path) / "SHS100K" / "audio"
@@ -364,9 +379,9 @@ def filter_by_audio(
                 filtered[clique_id] = valid_versions
         splitdict[split] = filtered
         
-        if verbose:
-            total_versions = sum(len(v) for v in splitdict[split].values())
-            print(f"  {split}: {len(splitdict[split])} cliques, {total_versions} versions")
+        total_versions = sum(len(v) for v in splitdict[split].values())
+        dist_print(f"  {split}: {len(splitdict[split])} cliques, {total_versions} versions", 
+                   verbose)
     
     return splitdict
 
@@ -380,22 +395,21 @@ def filter_single_version_cliques(
     
     Args:
         splitdict: Split to clique to versions mapping
-        verbose: Print progress
+        verbose: Print progress (only from rank 0)
     
     Returns:
         Filtered splitdict with only multi-version cliques
     """
-    if verbose:
-        print("Removing single-version cliques...")
+    dist_print("Removing single-version cliques...", verbose)
     
     for split in ["train", "val", "test"]:
         filtered = {cid: vers for cid, vers in splitdict[split].items() 
                    if len(vers) >= 2}
         splitdict[split] = filtered
         
-        if verbose:
-            total = sum(len(v) for v in splitdict[split].values())
-            print(f"  {split}: {len(splitdict[split])} cliques, {total} versions")
+        total = sum(len(v) for v in splitdict[split].values())
+        dist_print(f"  {split}: {len(splitdict[split])} cliques, {total} versions", 
+                   verbose)
     
     return splitdict
 
@@ -409,13 +423,12 @@ def remove_overlapping_cliques(
     
     Args:
         splitdict: Split to clique to versions mapping
-        verbose: Print progress
+        verbose: Print progress (only from rank 0)
     
     Returns:
         Splitdict with no overlapping cliques
     """
-    if verbose:
-        print("Removing overlapping cliques...")
+    dist_print("Removing overlapping cliques...", verbose)
     
     train_cliques = set(splitdict["train"].keys())
     
@@ -433,7 +446,7 @@ def remove_overlapping_cliques(
             removed_test += 1
     
     if verbose and (removed_val or removed_test):
-        print(f"  Removed {removed_val} from val, {removed_test} from test")
+        dist_print(f"  Removed {removed_val} from val, {removed_test} from test", verbose)
     
     return splitdict
 
@@ -468,13 +481,15 @@ def verify_embeddings(
         dataset_name: Dataset identifier
         hidden_states_path: Base path to embeddings
         required_filename: Embedding filename
-        verbose: Print progress
+        verbose: Print progress (only from rank 0)
     
     Returns:
         True if all embeddings exist
+    
+    Note:
+        Uses distributed-aware printing to avoid duplicate messages across GPUs.
     """
-    if verbose:
-        print(f"Verifying embeddings ({required_filename})...")
+    dist_print(f"Verifying embeddings ({required_filename})...", verbose)
     
     all_good = True
     for split in ["train", "val", "test"]:
@@ -487,10 +502,10 @@ def verify_embeddings(
         
         if missing:
             all_good = False
-            print(f"  {split}: {len(missing)} missing embeddings")
+            dist_print(f"  {split}: {len(missing)} missing embeddings", verbose)
         else:
             total = sum(len(v) for v in splitdict[split].values())
-            print(f"  {split}: ✓ All {total} versions have embeddings")
+            dist_print(f"  {split}: ✓ All {total} versions have embeddings", verbose)
     
     return all_good
 
@@ -510,13 +525,12 @@ def filter_by_embeddings(
         dataset_name: Dataset identifier
         hidden_states_path: Base path to embeddings
         required_filename: Embedding filename
-        verbose: Print progress
+        verbose: Print progress (only from rank 0)
     
     Returns:
         Filtered splitdict
     """
-    if verbose:
-        print("Filtering by embedding availability...")
+    dist_print("Filtering by embedding availability...", verbose)
     
     for split in ["train", "val", "test"]:
         filtered = {}
@@ -528,8 +542,8 @@ def filter_by_embeddings(
                 filtered[clique_id] = valid_versions
         splitdict[split] = filtered
         
-        if verbose:
-            total = sum(len(v) for v in splitdict[split].values())
-            print(f"  {split}: {len(splitdict[split])} cliques, {total} versions")
+        total = sum(len(v) for v in splitdict[split].values())
+        dist_print(f"  {split}: {len(splitdict[split])} cliques, {total} versions", 
+                   verbose)
     
     return splitdict
