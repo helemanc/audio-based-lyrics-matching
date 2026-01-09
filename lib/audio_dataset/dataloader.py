@@ -201,7 +201,8 @@ def create_dataloader(
     batch_size: int = 8,
     evaluation_mode: bool = False, 
     debug_mode: bool = False,
-    use_whisper_loader: bool = True, 
+    use_whisper_loader: bool = True,
+    use_transcriptions: bool = True,  
     num_workers: int = 8, 
     pin_memory: bool = False,
     debug_num_cliques: Optional[int] = None, 
@@ -228,6 +229,9 @@ def create_dataloader(
         evaluation_mode: If True, runs in evaluation mode (no shuffling, no dropout)
         debug_mode: If True, filters out items without valid transcriptions
         use_whisper_loader: If True, uses Whisper's audio loading function
+        use_transcriptions: If True, loads pre-existing transcriptions from disk.
+            Set to False for Whisper extraction (generates its own) or audio-only
+            methods (WEALY, CLEWS). Set to True for SBERT or text baselines.
         num_workers: Number of worker processes for data loading
         pin_memory: If True, pins memory for faster GPU transfer
         debug_num_cliques: If set, limits dataset to samples from this many cliques
@@ -246,6 +250,11 @@ def create_dataloader(
         - Validation/Test splits: No shuffling, all samples included
         - Debug mode: Limits to first N cliques, adjusts batch size accordingly
     
+    Performance Tips:
+        - For Whisper extraction: Set use_transcriptions=False (saves 5-10 min)
+        - For SBERT extraction: Set use_transcriptions=True (needs transcriptions)
+        - For audio-only methods: Set use_transcriptions=False
+    
     Example:
         >>> # Standard training dataloader
         >>> train_loader = create_dataloader(
@@ -254,6 +263,26 @@ def create_dataloader(
         ...     data_folder="/data",
         ...     split="train",
         ...     batch_size=16
+        ... )
+        
+        >>> # Whisper extraction (fast initialization)
+        >>> whisper_loader = create_dataloader(
+        ...     dataset_name="shs",
+        ...     base_path="datasets/shs",
+        ...     data_folder="/data",
+        ...     split="train",
+        ...     batch_size=8,
+        ...     use_transcriptions=False  # Skip loading transcriptions
+        ... )
+        
+        >>> # SBERT extraction (needs transcriptions)
+        >>> sbert_loader = create_dataloader(
+        ...     dataset_name="shs",
+        ...     base_path="datasets/shs",
+        ...     data_folder="/data",
+        ...     split="train",
+        ...     batch_size=16,
+        ...     use_transcriptions=True  # Load transcriptions
         ... )
         
         >>> # Debug with limited cliques
@@ -299,7 +328,7 @@ def create_dataloader(
     signal.signal(signal.SIGINT, sig_handler)
     signal.signal(signal.SIGTERM, sig_handler)
 
-    # Create the dataset instance
+    # Create the dataset instance with use_transcriptions parameter
     dataset = AudioDataset(
         dataset_name,
         base_path,
@@ -308,7 +337,8 @@ def create_dataloader(
         whisper_set,
         evaluation_mode,
         debug_mode,
-        use_whisper_loader
+        use_whisper_loader,
+        use_transcriptions 
     )
 
     # If debug_num_cliques is set, filter to keep only samples from limited cliques

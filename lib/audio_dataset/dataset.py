@@ -29,6 +29,7 @@ class AudioDataset(Dataset):
         split (str): 'train', 'val', or 'test'
         whisper_set (str): Whisper model identifier
         evaluation_mode (bool): If True, skips audio loading
+        use_transcriptions (bool): If True, loads transcriptions for SBERT/baselines
         df (pd.DataFrame): Filtered dataset
         transcription_cache (TranscriptionCache): Cache manager
         clique_id_to_idx/version_id_to_idx (Dict): ID mappings
@@ -47,7 +48,8 @@ class AudioDataset(Dataset):
         whisper_set: Union[str, List[str]] = "turbo_nothing_whisper_42", 
         evaluation_mode: bool = False,
         debug_mode: bool = False, 
-        use_whisper_loader: bool = True
+        use_whisper_loader: bool = True,
+        use_transcriptions: bool = True
     ) -> None:
         """
         Initialize AudioDataset.
@@ -61,6 +63,7 @@ class AudioDataset(Dataset):
             evaluation_mode: Skip audio loading (faster for evaluation)
             debug_mode: Only samples with valid transcriptions
             use_whisper_loader: Use whisper.load_audio() vs torchaudio
+            use_transcriptions: If False, skip loading transcriptions (for Whisper extraction)
         
         Note:
             First run: 5-10 min (builds cache). Subsequent: <1 min.
@@ -73,18 +76,25 @@ class AudioDataset(Dataset):
         self.evaluation_mode: bool = evaluation_mode
         self.debug_mode: bool = debug_mode
         self.use_whisper_loader: bool = use_whisper_loader
+        self.use_transcriptions: bool = use_transcriptions
 
-        # Initialize and load
+        # Initialize cache (always needed for structure)
         self.transcription_cache: TranscriptionCache = TranscriptionCache(
             data_folder, dataset_name
         )
+        
+        # Load data
         self.df: pd.DataFrame = self._load_data()
 
-        # Load transcriptions
-        if len(self.df) > 0:
+        # Conditionally load transcriptions based on flag
+        if self.use_transcriptions and len(self.df) > 0:
+            print(f"Loading transcriptions for {self.whisper_set}...")
             self.df = self.transcription_cache.apply_to_dataframe(
                 self.df, [self.whisper_set], split=split
             )
+        else:
+            if not self.use_transcriptions:
+                print("Skipping transcription loading (use_transcriptions=False)")
 
         # Create ID mappings
         self._create_id_mappings()
@@ -111,6 +121,8 @@ class AudioDataset(Dataset):
             if df.empty:
                 return df
 
+            # Note: add_file_status_columns checks audio/transcription file existence
+            # This is still useful even without loading transcriptions
             df = data_processing.add_file_status_columns(
                 df, self.dataset_name, self.data_folder, self.whisper_set
             )
@@ -218,8 +230,8 @@ class AudioDataset(Dataset):
             - clique_idx: torch.long
             - version_idx: torch.long
             - waveform: torch.float32, shape (n_samples,) or (16000,) if evaluation_mode
-            - transcription: str
-            - is_valid: torch.bool
+            - transcription: str (empty if use_transcriptions=False)
+            - is_valid: torch.bool (False if use_transcriptions=False)
             - audio_path: str
         """
         try:
@@ -230,17 +242,22 @@ class AudioDataset(Dataset):
             clique_idx = torch.tensor(row["clique_idx"], dtype=torch.long)
             version_idx = torch.tensor(row["version_idx"], dtype=torch.long)
 
-            # Get transcription
-            trans_col = f"transcription_{self.whisper_set}"
-            transcription = row.get(trans_col, "")
-            if pd.isna(transcription):
+            # Get transcription (only if use_transcriptions is True)
+            if self.use_transcriptions:
+                trans_col = f"transcription_{self.whisper_set}"
+                transcription = row.get(trans_col, "")
+                if pd.isna(transcription):
+                    transcription = ""
+                
+                valid_col = f"has_valid_transcription_{self.whisper_set}"
+                has_valid = row.get(valid_col, False)
+                if pd.isna(has_valid):
+                    has_valid = False
+                has_valid = torch.tensor(has_valid, dtype=torch.bool)
+            else:
+                # Return empty transcription and False validity when not using transcriptions
                 transcription = ""
-            
-            valid_col = f"has_valid_transcription_{self.whisper_set}"
-            has_valid = row.get(valid_col, False)
-            if pd.isna(has_valid):
-                has_valid = False
-            has_valid = torch.tensor(has_valid, dtype=torch.bool)
+                has_valid = torch.tensor(False, dtype=torch.bool)
 
             # Get audio
             audio_path = self.get_audio_path(idx)
