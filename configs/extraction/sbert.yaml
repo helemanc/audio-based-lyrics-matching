@@ -7,7 +7,7 @@ jobname: "sbert_extraction"
 seed: 42
 
 path:
-  base_path: "/path/to/projects/lyrics-version-identification/datasets"
+  base_path: "/path/to/projects/audio-based-lyrics-matching/datasets"
   data: "/path/to/data"
   save_data_path: "/path/to/data"
   transcription_folder: null

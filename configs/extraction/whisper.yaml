@@ -33,10 +33,10 @@ checkpoint: null
 # PATHS - Override for your environment
 # ============================================================================
 path:
-  base_path: "/path/to/projects/lyrics-version-identification/datasets"
+  base_path: "/path/to/projects/audio-based-lyrics-matching/datasets"
   data: "/path/to/data"
   save_data_path: "/path/to/data"
-  working_dir: "/path/to/projects/lyrics-version-identification"
+  working_dir: "/path/to/projects/audio-based-lyrics-matching"
   transcription_folder: null
   hidden_states_folder: null
 
