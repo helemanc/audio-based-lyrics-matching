@@ -47,7 +47,6 @@ All scripts support distributed execution across multiple GPUs, making them suit
 - [Installation](#installation)
 - [Data](#data)
 - [Dataset Organization](#dataset-organization)
-- [Quick Start](#quick-start)
 - [Usage](#usage)
   - [1. Feature Extraction](#1-feature-extraction)
   - [2. Training](#2-training)
