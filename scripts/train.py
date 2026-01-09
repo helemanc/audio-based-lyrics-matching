@@ -210,6 +210,11 @@ def main() -> None:
     myprint(OmegaConf.to_yaml(conf)[:-1])
     myprint("-" * 70)
     
+
+    #Save configuration to log directory for inference
+    log_dir = training_utils.ensure_checkpoint_directory(conf, fabric)
+    training_utils.save_configuration(conf, log_dir, fabric)
+    
     # Initialize training components
     model, optim, sched, sched_on_epoch, early_stopping = (
         initialize_training_components(conf, fabric)
