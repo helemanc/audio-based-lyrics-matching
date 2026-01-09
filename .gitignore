@@ -209,3 +209,6 @@ __marimo__/
 
 # Release test folders
 tests/
+cache/
+scripts/download
+trash/
