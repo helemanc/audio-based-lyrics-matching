@@ -1,0 +1,65 @@
+# ============================================================================
+# SBERT FEATURE EXTRACTION - UNIFIED CONFIG
+# ============================================================================
+# Works for all datasets: SHS, Lyric-Covers, Discogs-VI
+
+jobname: "sbert_extraction"
+seed: 42
+
+path:
+  base_path: "/path/to/projects/lyrics-version-identification/datasets"
+  data: "/path/to/data"
+  save_data_path: "/path/to/data"
+  transcription_folder: null
+  hidden_states_folder: null
+
+fabric:
+  nnodes: 1
+  ngpus: 4
+  precision: "32"
+
+pytorch:
+  cudnn_benchmark: false
+  cudnn_deterministic: true
+  float32_matmul_precision: "medium"
+  detect_anomaly: false
+
+data:
+  dataset_name: "shs"  # "shs", "lyric-covers", "discogs-vi"
+  split: "val"
+  batch_size: 16
+  nworkers: 8
+
+  # Load transcriptions
+  use_transcriptions: True
+  
+  # Requires existing transcriptions
+  # Use "_en" suffix if transcriptions were extracted with English forced
+  whisper_set: "prompt_whisper_42_transcribe"  # Or: "prompt_whisper_42_transcribe_en"
+  
+  evaluation_mode: false
+  enforce_max_duration: true
+  debug_num_cliques: null
+  
+  embedding_type: "sbert"
+  embedding_format: "single"
+
+sbert:
+  model_name: "all-MiniLM-L6-v2"
+  batch_size: 32
+
+extraction:
+  type: "sbert"
+  skip_existing: true
+  save_sbert_embeddings: true
+  
+  save_transcription: false
+  save_encoder_embeddings: false
+  save_encoder_embeddings_seq: false
+  save_hidden_states: false
+  save_last_hidden_states: false
+  save_last_hidden_states_seq: false
+
+evaluation:
+  run_evaluation: false
+  distances: ["cosine", "euclidean"]

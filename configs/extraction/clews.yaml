@@ -1,0 +1,54 @@
+# ============================================================================
+# CLEWS FEATURE EXTRACTION - UNIFIED CONFIG
+# ============================================================================
+# Works for: SHS, Discogs-VI
+
+jobname: "clews_extraction"
+seed: 42
+
+maxlen: 600
+qslen: null
+qshop: 5
+cslen: null
+cshop: 5
+redux: null
+limit_num: null
+
+path:
+  data: "/path/to/data"
+  save_data_path: "/path/to/data"
+  clews_cache_dir: "/path/to/cache-clews"
+  clews_audio_dir: "/path/to/audio"
+  transcription_folder: null
+  hidden_states_folder: null
+
+clews:
+  project_dir: "/path/to/clews"
+  config_path: null  # Auto-download
+  checkpoint_path: null  # Auto-download
+  language: null  # For output file suffix (not related to audio language)
+
+fabric:
+  nnodes: 1
+  ngpus: 4
+  precision: "32"
+
+pytorch:
+  cudnn_benchmark: false
+  cudnn_deterministic: false
+  float32_matmul_precision: "medium"
+  detect_anomaly: false
+
+data:
+  dataset_name: "shs"  # "shs" or "discogs-vi"
+  split: "val"
+  batch_size: 2
+  nworkers: 16
+
+extraction:
+  type: "clews"
+  skip_existing: true
+
+evaluation:
+  run_evaluation: false
+  distances: ["cosine", "euclidean"]

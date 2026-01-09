@@ -1,0 +1,76 @@
+# ============================================================================
+# WEALY FEATURE EXTRACTION - UNIFIED CONFIG
+# ============================================================================
+# Works for all datasets: SHS, Lyric-Covers, Discogs-VI
+
+jobname: "wealy_extraction"
+seed: 42
+
+path:
+  save_data_path: "/path/to/data"
+  working_dir: "/path/to/projects/lyrics-version-identification"
+  transcription_folder: null
+  hidden_states_folder: null
+
+fabric:
+  nnodes: 1
+  ngpus: 4
+  precision: "bf16-mixed"
+
+pytorch:
+  cudnn_benchmark: false
+  cudnn_deterministic: true
+  float32_matmul_precision: "medium"
+  detect_anomaly: false
+
+data:
+  dataset_name: "shs"  # "shs", "lyric-covers", "discogs-vi"
+  split: "val"
+  batch_size: 1
+  nworkers: 0
+
+  # Load transcriptions
+  use_transcriptions: False
+  
+  samplerate: 16000
+  audiolen: 150
+  maxlen: null
+  pad_mode: "repeat"
+  
+  # Requires pre-extracted Whisper embeddings
+  # Use "_en" suffix if embeddings were extracted with English forced
+  embedding_type: "last_hidden_states"      # Or: "last_hidden_states_en"
+  embedding_format: "concat"
+  chunk_size: 1500
+  use_avg_pooling: false
+  use_random_chunks: false
+  max_length: 4000
+
+model:
+  name: "whisper-ft"
+  input_channels: 1280
+  conv_blocks: 0
+  conv_kernel_size: 9
+  conv_stride: 4
+  hidden_dim: 768
+  zdim: 512
+  loss:
+    type: "triplet"
+    margin: 0.1
+  num_heads: 12
+  ff_dim: 1024
+  dropout: 0.1
+  num_transformer_blocks: 4
+
+wealy:
+  checkpoint_path: "/path/to/wealy/checkpoint_best.ckpt"
+  language: null  # Not related to Whisper language - this is for output file suffix
+
+extraction:
+  type: "wealy"
+  skip_existing: true
+  batch_size: 1
+  overlap_percentage: 0.9
+
+evaluation:
+  run_evaluation: false

@@ -1,0 +1,118 @@
+# ============================================================================
+# WHISPER FEATURE EXTRACTION - UNIFIED CONFIG
+# ============================================================================
+# Works for all datasets: SHS, Lyric-Covers, Discogs-VI
+#
+# USAGE:
+#   # Auto-detect language
+#   python scripts/feature_extraction.py \
+#       jobname=whisper_shs_val \
+#       conf=configs/extraction/whisper.yaml \
+#       data.dataset_name=shs
+#
+#   # Force English decoding (any dataset)
+#   python scripts/feature_extraction.py \
+#       jobname=whisper_shs_val_en \
+#       conf=configs/extraction/whisper.yaml \
+#       data.dataset_name=shs \
+#       data.whisper_set=prompt_whisper_42_transcribe_en \
+#       data.embedding_type=last_hidden_states_en \
+#       whisper.language=en
+#
+#   # Different dataset
+#   python scripts/feature_extraction.py \
+#       jobname=whisper_dvi_val \
+#       conf=configs/extraction/whisper.yaml \
+#       data.dataset_name=discogs-vi
+
+jobname: "whisper_extraction"
+seed: 42
+checkpoint: null
+
+# ============================================================================
+# PATHS - Override for your environment
+# ============================================================================
+path:
+  base_path: "/path/to/projects/lyrics-version-identification/datasets"
+  data: "/path/to/data"
+  save_data_path: "/path/to/data"
+  working_dir: "/path/to/projects/lyrics-version-identification"
+  transcription_folder: null
+  hidden_states_folder: null
+
+# ============================================================================
+# FABRIC
+# ============================================================================
+fabric:
+  nnodes: 1
+  ngpus: 2
+  precision: "bf16-mixed"
+
+# ============================================================================
+# PYTORCH
+# ============================================================================
+pytorch:
+  cudnn_benchmark: false
+  cudnn_deterministic: true
+  float32_matmul_precision: "medium"
+  detect_anomaly: false
+
+# ============================================================================
+# DATA
+# ============================================================================
+data:
+  dataset_name: "shs"  # "shs", "lyric-covers", "discogs-vi"
+  split: "val"         # "train", "val", "test"
+  batch_size: 8
+  nworkers: 8
+
+  # Load transcriptions
+  use_transcriptions: False
+  
+  # Audio parameters
+  samplerate: 16000
+  audiolen: 150
+  maxlen: null
+  pad_mode: "repeat"
+  
+  # Language settings (add "_en" suffix to force English)
+  whisper_set: "prompt_whisper_42_transcribe"        # Or: "prompt_whisper_42_transcribe_en" for English
+  embedding_type: "last_hidden_states"               # Or: "last_hidden_states_en" for English
+  embedding_format: "concat"
+  
+  # Evaluation
+  evaluation_mode: false
+  enforce_max_duration: true
+  debug_num_cliques: null
+
+# ============================================================================
+# WHISPER MODEL
+# ============================================================================
+whisper:
+  model_name: "turbo"      # "tiny", "base", "small", "medium", "large", "turbo"
+  language: null          # Set to "en" to force English (must also update whisper_set and embedding_type above)
+  initial_prompt: "lyrics:"
+  carry_initial_prompt: false
+  condition_on_previous_text: true
+
+# ============================================================================
+# EXTRACTION
+# ============================================================================
+extraction:
+  type: "whisper"
+  skip_existing: true
+  
+  # What to save
+  save_transcription: true
+  save_encoder_embeddings: false
+  save_encoder_embeddings_seq: false
+  save_last_hidden_states: false
+  save_last_hidden_states_seq: true
+  save_hidden_states: false
+
+# ============================================================================
+# EVALUATION
+# ============================================================================
+evaluation:
+  run_evaluation: false
+  distances: ["cosine", "euclidean"]
