@@ -516,9 +516,6 @@ audio-based-lyrics-matching/
 │   ├── train.py                    # Train models
 │   └── inference.py                # Evaluate models
 │
-├── docs/                           # Documentation
-│   └── DATASET_CONFIGS.md          # Dataset configuration guide
-│
 ├── requirements.txt                # Python dependencies
 └── README.md                       # This file
 ```
@@ -535,7 +532,7 @@ audio-based-lyrics-matching/
 - [ ] **Integrate CLEWS audio embeddings**
   - [ ] Set up separate Python environment (dependency conflicts)
 
-- [ ] **Integratet transcription-based baselines**
+- [ ] **Integrate transcription-based baselines**
   - [ ] TF-IDF similarity on Whisper transcriptions  
   - [ ] SBERT cosine similarity baseline  
   - [ ] Edit distance (Levenshtein) baseline
