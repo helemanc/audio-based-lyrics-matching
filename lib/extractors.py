@@ -150,8 +150,6 @@ class BaseExtractor(ABC):
 # WHISPER EXTRACTOR
 # ============================================================================
 
-# Replace the WhisperExtractor class entirely
-
 class WhisperExtractor(BaseExtractor):
     """Extract encoder and decoder embeddings using Whisper."""
     
@@ -436,8 +434,6 @@ class WhisperExtractor(BaseExtractor):
 # SBERT EXTRACTOR
 # ============================================================================
 
-# Replace the SBERTExtractor class entirely
-
 class SBERTExtractor(BaseExtractor):
     """Extract sentence embeddings using SBERT."""
     
@@ -717,8 +713,6 @@ class SBERTExtractor(BaseExtractor):
 # ============================================================================
 # WEALY EXTRACTOR
 # ============================================================================
-
-# Replace the WEALYExtractor class entirely
 
 class WEALYExtractor(BaseExtractor):
     """Extract WEALY concatenated embeddings using overlapping chunks."""
