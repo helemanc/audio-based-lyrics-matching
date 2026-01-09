@@ -29,6 +29,9 @@ from lib.evaluation import eval
 
 import os 
 
+from omegaconf import OmegaConf, DictConfig
+
+
 
 #########################################################################################
 # Type Definitions
@@ -542,6 +545,52 @@ def validate_epoch(
 # Checkpoint Management
 #########################################################################################
 
+def ensure_checkpoint_directory(conf: DictConfig, fabric: Fabric) -> Path:
+    """
+    Ensure checkpoint directory exists and return its path.
+    
+    Creates the log directory structure exactly once to avoid
+    nested directory creation. The directory is: {path.logs}/{jobname}
+    
+    Args:
+        conf: Configuration with path.logs and jobname
+        fabric: Fabric instance for rank checking
+    
+    Returns:
+        Path to the checkpoint directory
+    
+    Example:
+        >>> log_dir = ensure_checkpoint_directory(conf, fabric)
+        >>> # log_dir = Path('logs/wealy_shs_full')
+    """
+    base_logs = Path(conf.path.logs)
+    
+    # Check if jobname is already in the path (avoid duplication)
+    if base_logs.name == conf.jobname:
+        # Path already includes jobname, use it directly
+        log_dir = base_logs
+        if fabric.is_global_zero:
+            print(f"  Note: path.logs already includes jobname")
+            print(f"  Using log dir: {log_dir}")
+    else:
+        # Path doesn't include jobname, append it
+        log_dir = base_logs / conf.jobname
+        if fabric.is_global_zero:
+            print(f"  Base logs: {base_logs}")
+            print(f"  Job name: {conf.jobname}")
+            print(f"  Full log dir: {log_dir}")
+    
+    # Create directory only on rank 0
+    if fabric.is_global_zero:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        print(f"✓ Checkpoint directory created: {log_dir}")
+    
+    # Wait for rank 0 to create directory
+    fabric.barrier()
+    
+    return log_dir
+
+
 def get_checkpoint_paths(log_dir: str) -> Tuple[str, str, str]:
     """
     Get paths for checkpoint files.
@@ -661,20 +710,21 @@ def train(
         >>> train(model, optim, sched, True, dl_train, dl_valid,
         ...       early_stopping, conf, fabric, start_epoch=0)
     """
-    import os
-    
     myprint = lambda s, end="\n": print_utils.myprint(
         s, end=end, doit=fabric.is_global_zero
     )
     
     timer = print_utils.Timer()
     
-    fn_ckpt_last, fn_ckpt_best, fn_ckpt_epoch = get_checkpoint_paths(conf.path.logs)
+    # Ensure log directory exists and get checkpoint paths
+    log_dir = ensure_checkpoint_directory(conf, fabric)
+    fn_ckpt_last, fn_ckpt_best, fn_ckpt_epoch = get_checkpoint_paths(str(log_dir))
     
     lr = sched.get_last_lr()[0]
     stop = None
     
     myprint("Training...")
+    
     
     for epoch in range(start_epoch, conf.training.numepochs):
         desc = f"{epoch+1:{len(str(conf.training.numepochs))}d}/{conf.training.numepochs}"
@@ -773,3 +823,28 @@ def train(
         if stop is not None:
             myprint(stop + " Stop.")
             break
+
+
+#########################################################################################
+# Save configuration for inference 
+#########################################################################################
+
+def save_configuration(
+    conf: DictConfig,
+    log_dir: Path,
+    fabric: Fabric
+) -> None:
+    """
+    Save configuration to log directory for inference/resumption.
+    
+    Args:
+        conf: Configuration object to save
+        log_dir: Directory where logs/checkpoints are saved (must already exist)
+        fabric: Fabric instance for rank checking
+    """
+    if not fabric.is_global_zero:
+        return
+    
+    config_path = log_dir / "configuration.yaml"
+    OmegaConf.save(conf, config_path)
+    print(f"✓ Configuration saved to {config_path}")
