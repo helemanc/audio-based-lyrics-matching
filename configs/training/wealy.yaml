@@ -1,0 +1,257 @@
+# ============================================================================
+# WHISPER-BASED MODEL TRAINING CONFIG - UNIFIED
+# ============================================================================
+# Works for all datasets: SHS, Lyric-Covers, Discogs-VI
+#
+# DATASET-SPECIFIC REQUIREMENTS:
+#
+# SHS:
+#   Required: hidden_states, meta, shs_data, shs_splits
+#   Optional: -
+#
+# Lyric-Covers:
+#   Required: hidden_states, meta, lyric_covers_data
+#   Optional: -
+#
+# Discogs-VI:
+#   Required: hidden_states, meta, discogs_vi_data
+#   Optional: -
+#
+# USAGE EXAMPLES:
+#   See bottom of file for complete command-line examples
+
+jobname: "whisper_training"
+seed: 42
+checkpoint: null
+limit_batches: null  # Set to integer to limit batches for debugging
+
+# ============================================================================
+# PATHS
+# ============================================================================
+path:
+  # -------------------------
+  # COMMON PATHS (all datasets need these)
+  # -------------------------
+  cache: "/path/to/cache"                    # Cache directory
+  logs: "/path/to/logs"                      # Logs and checkpoints
+  working_dir: "/path/to/project"            # Project root directory
+  data: "/path/to/data"                      # Data root directory
+  save_data_path: "/path/to/data"            # Output directory for saved data
+  
+  # -------------------------
+  # DATASET PATHS (override based on your dataset)
+  # -------------------------
+  
+  # Required for ALL datasets
+  hidden_states: "/path/to/hidden-states"    # Path to pre-extracted embeddings
+                                              # - SHS: /path/to/SHS100K-hidden-states
+                                              # - Lyric-Covers: /path/to/LyricCovers-hidden-states
+                                              # - Discogs-VI: /path/to/DiscogsVI-hidden-states
+  
+  meta: "/path/to/metadata.pt"               # Path to preprocessed metadata file
+                                              # - SHS: /path/to/cache/shs/metadata-shs.pt
+                                              # - Lyric-Covers: /path/to/cache/lyc/metadata-lyc.pt
+                                              # - Discogs-VI: /path/to/cache/dvi/metadata-dvi.pt
+  
+  # -------------------------
+  # SHS-SPECIFIC PATHS (only needed when dataset_name=shs)
+  # -------------------------
+  shs_data: "/path/to/shs/shs_data.csv"      # SHS: Path to main data CSV
+  shs_splits: "/path/to/shs"                 # SHS: Path to splits directory
+  
+  # -------------------------
+  # LYRIC-COVERS-SPECIFIC PATHS (only needed when dataset_name=lyric-covers)
+  # -------------------------
+  lyric_covers_data: "/path/to/lyric-covers" # Lyric-Covers: Dataset directory
+  
+  # -------------------------
+  # DISCOGS-VI-SPECIFIC PATHS (only needed when dataset_name=discogs-vi)
+  # -------------------------
+  discogs_vi_data: "/path/to/discogs-vi"     # Discogs-VI: Dataset directory
+
+# ============================================================================
+# FABRIC (Distributed Training)
+# ============================================================================
+fabric:
+  nnodes: 1              # Number of nodes
+  ngpus: 4               # GPUs per node
+  precision: "bf16-mixed"  # Options: "32", "16-mixed", "bf16-mixed"
+
+# ============================================================================
+# PYTORCH BACKEND
+# ============================================================================
+pytorch:
+  cudnn_benchmark: false
+  cudnn_deterministic: true
+  float32_matmul_precision: "medium"  # "highest", "high", "medium"
+  detect_anomaly: false
+
+# ============================================================================
+# DATA CONFIGURATION
+# ============================================================================
+data:
+  # Dataset selection
+  dataset_name: "shs"  # Options: "shs", "lyric-covers", "discogs-vi"
+  
+  # DataLoader settings
+  nworkers: 16         # Number of worker processes
+  
+  # Audio settings
+  samplerate: 16000    # Audio sample rate (Hz)
+  audiolen: 150        # Audio length (seconds)
+  maxlen: null         # Maximum sequence length (null = no limit)
+  pad_mode: "repeat"   # Padding mode: "repeat", "zero"
+  
+  # Sampling strategy
+  n_per_class: 2       # Number of versions per clique in each batch
+  p_samesong: 0        # Probability of sampling same song (for data augmentation)
+  
+  # Embedding configuration
+  embedding_type: "last_hidden_states"  # Options:
+                                         # - "encoder": Whisper encoder embeddings
+                                         # - "last_hidden_states": Whisper decoder (auto-detect language)
+                                         # - "last_hidden_states_en": Whisper decoder (force English)
+                                         # - "sbert": SBERT embeddings
+  
+  embedding_format: "concat"             # Options:
+                                         # - "concat": Concatenated sequence
+                                         # - "all": All frames separately
+  
+  use_avg_pooling: false  # Use average pooling instead of learned aggregation
+  
+  # Chunking strategy
+  max_length: 4000         # Maximum sequence length for chunks
+  use_random_chunks: true  # Enable random chunk selection (augmentation)
+  chunk_size: 1500         # Chunk size when use_random_chunks=true
+  
+  # Masking (for models that support it)
+  apply_masks_with_padding: false  # Apply attention masks for padded sequences
+  
+  # Debug settings
+  debug_num_cliques: null  # Limit to N cliques for debugging (null = use all)
+
+# ============================================================================
+# MODEL ARCHITECTURE
+# ============================================================================
+model:
+  name: "wealy"  # Model architecture name
+  
+  # Input/Output dimensions
+  input_channels: 1280  # Input feature dimension (Whisper last_hidden_states)
+                        # - Whisper encoder: 512
+                        # - Whisper decoder: 1280
+                        # - SBERT: 384
+  zdim: 512             # Output embedding dimension
+  
+  # Convolutional layers (optional downsampling)
+  conv_blocks: 0        # Number of conv blocks (0 = no conv layers)
+  conv_kernel_size: 9   # Kernel size for conv layers
+  conv_stride: 4        # Stride for conv layers
+  
+  # Transformer architecture
+  hidden_dim: 768              # Hidden dimension
+  num_heads: 12                # Number of attention heads
+  ff_dim: 1024                 # Feedforward dimension
+  dropout: 0.1                 # Dropout rate
+  num_transformer_blocks: 4    # Number of transformer blocks
+  
+  # Loss configuration
+  loss:
+    type: "ntxent"        # Loss type: "triplet", "ntxent"
+    temperature: 0.1      # Temperature for NTXent loss
+
+# ============================================================================
+# TRAINING CONFIGURATION
+# ============================================================================
+training:
+  # Training duration
+  batchsize: 64         # Batch size per GPU
+  numepochs: 1000       # Total number of epochs
+  save_freq: null       # Save checkpoint every N epochs (null = only best/last)
+  
+  # Optimizer configuration
+  optim:
+    name: "adamw"       # Optimizer: "adam", "adamw", "sgd"
+    lr: 1e-4            # Learning rate
+    wd: 1e-3            # Weight decay
+    sched: "warmcosine_50"  # Scheduler: "warmcosine_N", "plateau", "step", "none"
+                             # warmcosine_N: warmup for N epochs, then cosine decay
+    min_lr: 1e-6        # Minimum learning rate
+  
+  # Monitoring configuration
+  monitor:
+    quantity: "m_MAP"   # Metric to monitor: "m_MAP", "m_MR1", "m_ARP", "l_main"
+    mode: "max"         # "max" (higher is better) or "min" (lower is better)
+
+# ============================================================================
+# EARLY STOPPING (Optional)
+# ============================================================================
+early_stopping:
+  enabled: false        # Enable/disable early stopping
+  patience: 10          # Number of epochs without improvement before stopping
+  mode: "max"           # "max" or "min"
+  min_delta: 0.0        # Minimum change to qualify as improvement
+  metric: "m_MAP"       # Metric to monitor (can differ from training.monitor.quantity)
+
+# ============================================================================
+# USAGE EXAMPLES
+# ============================================================================
+# 
+# SHS - FULL TRAINING:
+# -------------------
+# python scripts/train.py \
+#     jobname=whisper_shs_exp1 \
+#     conf=configs/training/whisper_base.yaml \
+#     data.dataset_name=shs \
+#     path.cache=/scratch/cache \
+#     path.logs=/scratch/logs \
+#     path.working_dir=/scratch/project \
+#     path.data=/scratch/data \
+#     path.save_data_path=/scratch/data \
+#     path.hidden_states=/scratch/data/SHS100K-hidden-states \
+#     path.meta=/scratch/cache/shs/metadata-shs.pt \
+#     path.shs_data=/scratch/project/datasets/shs/shs_data.csv \
+#     path.shs_splits=/scratch/project/datasets/shs
+# 
+# LYRIC-COVERS - FULL TRAINING:
+# -----------------------------
+# python scripts/train.py \
+#     jobname=whisper_lyc_exp1 \
+#     conf=configs/training/whisper_base.yaml \
+#     data.dataset_name=lyric-covers \
+#     path.cache=/scratch/cache \
+#     path.logs=/scratch/logs \
+#     path.working_dir=/scratch/project \
+#     path.data=/scratch/data \
+#     path.save_data_path=/scratch/data \
+#     path.hidden_states=/scratch/data/LyricCovers-hidden-states \
+#     path.meta=/scratch/cache/lyc/metadata-lyc.pt \
+#     path.lyric_covers_data=/scratch/project/datasets/lyric-covers
+# 
+# DISCOGS-VI - FULL TRAINING:
+# ---------------------------
+# python scripts/train.py \
+#     jobname=whisper_dvi_exp1 \
+#     conf=configs/training/whisper_base.yaml \
+#     data.dataset_name=discogs-vi \
+#     path.cache=/scratch/cache \
+#     path.logs=/scratch/logs \
+#     path.working_dir=/scratch/project \
+#     path.data=/scratch/data \
+#     path.save_data_path=/scratch/data \
+#     path.hidden_states=/scratch/data/DiscogsVI-hidden-states \
+#     path.meta=/scratch/cache/dvi/metadata-dvi.pt \
+#     path.discogs_vi_data=/scratch/project/datasets/discogs-vi
+# 
+# QUICK TEST (5 cliques, 2 epochs):
+# ----------------------------------
+# python scripts/train.py \
+#     jobname=test_whisper \
+#     conf=configs/training/whisper_base.yaml \
+#     data.dataset_name=shs \
+#     data.debug_num_cliques=5 \
+#     limit_batches=2 \
+#     training.batchsize=4 \
+#     training.numepochs=2 \
+#     fabric.ngpus=1 \
+#     [... paths ...]
