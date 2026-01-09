@@ -526,6 +526,8 @@ audio-based-lyrics-matching/
 
 - [ ] **Fix inference script**
 
+- [ ] **Checkpoints release**
+
 - [ ] **Fix Triplet Loss and CLEWS loss**
 
 - [ ] **Integrate CLEWS audio embeddings**
