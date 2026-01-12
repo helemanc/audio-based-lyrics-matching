@@ -211,9 +211,9 @@ Extract Whisper decoder hidden states from audio using **AudioDataset**.
 
 **Command Template:**
 ```bash
-python scripts/extract_whisper.py \
+python scripts/feature_extraction.py \
     jobname=<JOB_NAME> \
-    conf=configs/extraction/whisper_base.yaml \
+    conf=configs/extraction/whisper.yaml \
     data.dataset_name=<DATASET_NAME> \
     path.data=<PATH_TO_AUDIO_DATA> \
     path.save_data_path=<PATH_TO_SAVE_EMBEDDINGS> \
@@ -273,9 +273,9 @@ SHS100K-hidden-states/
 
 Extract SBERT text embeddings from Whisper transcriptions:
 ```bash
-python scripts/extract_sbert.py \
+python scripts/feature_extraction.py \
     jobname=<JOB_NAME> \
-    conf=configs/extraction/sbert_base.yaml \
+    conf=configs/extraction/sbert.yaml \
     data.dataset_name=<DATASET_NAME> \
     path.data=<PATH_TO_AUDIO_DATA> \
     path.save_data_path=<PATH_TO_SAVE_EMBEDDINGS> \
@@ -453,20 +453,6 @@ This file contains **all training parameters** with detailed documentation:
        training.optim.lr=5e-4 \
        model.num_transformer_blocks=6
 ```
-
-### Quick Test Configuration
-
-Test the pipeline with minimal data:
-```bash
-python scripts/train.py \
-    jobname=test_run \
-    conf=configs/training/test_5_cliques.yaml \
-    data.dataset_name=shs \
-    path.hidden_states=<PATH_TO_EMBEDDINGS> \
-    fabric.ngpus=1
-```
-
-This uses only 5 cliques and runs for 2 epochs (~2-5 minutes).
 
 ---
 
