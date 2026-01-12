@@ -3,8 +3,8 @@ Loss functions for contrastive learning in version identification.
 
 This module provides three main loss functions:
 - NTXentLoss: Normalized Temperature-scaled Cross Entropy Loss (SimCLR)
-- TripletLoss: Triplet margin loss for metric learning
-- CLEWSLoss: CLEWS contrastive loss with alignment and uniformity
+- TripletLoss: Triplet margin loss for metric learning [WIP] 
+- CLEWSLoss: CLEWS contrastive loss with alignment and uniformity [WIP]
 
 All losses follow a unified interface:
     loss, logdict = loss_fn(z_label, z_idx, z, extra)
