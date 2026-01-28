@@ -510,7 +510,7 @@ audio-based-lyrics-matching/
 
 ## ✅ To-Do List
 
-- [ ] **Fix inference script**
+- [X] **Fix inference script**
 
 - [ ] **Checkpoints release**
 
