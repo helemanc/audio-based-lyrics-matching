@@ -36,7 +36,7 @@ from tqdm import tqdm
 
 from lib import dataset
 from lib.evaluation import eval
-from utils import pytorch_utils
+from utils import hf_utils, pytorch_utils
 
 #########################################################################################
 # Type Definitions
@@ -56,12 +56,26 @@ def setup_configuration() -> Any:
     """
     Setup evaluation configuration from command line arguments.
 
+    Supports two ways to specify the model:
+    1. checkpoint=/path/to/checkpoint.ckpt - Use a local checkpoint
+    2. model_name=username/model-name - Download from Hugging Face Hub
+
+    Path overrides can be specified via CLI:
+        hidden_states=/path/to/hidden-states
+        meta=/path/to/metadata.pt
+
     Returns:
         Configuration object with all parameters
 
     Example:
         >>> args = setup_configuration()
         >>> print(args.ngpus, args.partition)
+
+    Example with HF model:
+        python scripts/inference.py \\
+            model_name=username/wealy-shs-full \\
+            hidden_states=/data/hidden-states \\
+            partition=test
     """
     args = OmegaConf.from_cli()
 
@@ -82,20 +96,101 @@ def setup_configuration() -> Any:
         "checkpoint_dir": None,  # Will be derived from checkpoint path if not set
         "resume_from_checkpoint": True,
         "disable_checkpointing": False,
-        "disable_memory_logging": False,
+        "disable_memory_logging": True,  # Disabled by default for cleaner output
+        # HF Hub support
+        "model_name": None,  # HF repo ID (e.g., "username/wealy-shs-full")
+        "force_download": False,  # Force re-download from HF
+        # Path overrides (users can set these to override config paths)
+        "hidden_states": None,
+        "meta": None,
+        "shs_data": None,
+        "shs_splits": None,
+        "data": None,
+        "cache": None,
     }
 
     for k, v in defaults.items():
         setattr(args, k, getattr(args, k, v))
 
+    # Handle model_name: download from HF if provided
+    if args.model_name is not None:
+        args = _resolve_hf_model(args)
+
     # Derive checkpoint_dir from training checkpoint path if not explicitly set
     if args.checkpoint_dir is None and hasattr(args, "checkpoint") and args.checkpoint:
-        log_dir = os.path.dirname(args.checkpoint)
+        # Use absolute path to ensure checkpoint_dir is in the model's folder
+        checkpoint_abs = os.path.abspath(args.checkpoint)
+        log_dir = os.path.dirname(checkpoint_abs)
         args.checkpoint_dir = os.path.join(log_dir, "eval_checkpoints")
 
-    # Fallback to default if still None
+    # Fallback to default if still None (use project root's logs folder)
     if args.checkpoint_dir is None:
-        args.checkpoint_dir = "eval_checkpoints"
+        project_root = Path(__file__).parent.parent
+        args.checkpoint_dir = str(project_root / "logs" / "eval_checkpoints")
+
+    # Validate that checkpoint is set
+    if not hasattr(args, "checkpoint") or args.checkpoint is None:
+        raise ValueError(
+            "Must provide either 'checkpoint=/path/to/checkpoint.ckpt' "
+            "or 'model_name=username/model-name'"
+        )
+
+    return args
+
+
+def _is_rank_zero() -> bool:
+    """Check if current process is rank 0 (before Fabric is initialized)."""
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    return local_rank == 0
+
+
+def _resolve_hf_model(args: Any) -> Any:
+    """
+    Resolve model_name to local checkpoint path, downloading if needed.
+
+    Args:
+        args: Configuration with model_name set
+
+    Returns:
+        Updated args with checkpoint path set
+    """
+    repo_id = hf_utils.resolve_model_name(args.model_name)
+    model_name = repo_id.split("/")[-1]
+
+    # Determine project root for saving models
+    project_root = Path(__file__).parent.parent
+    save_dir = project_root / "logs"
+
+    # Only rank 0 prints status messages
+    is_rank_zero = _is_rank_zero()
+
+    # Check if already downloaded
+    if not args.force_download and hf_utils.is_model_downloaded(
+        model_name, str(save_dir)
+    ):
+        if is_rank_zero:
+            print(f"Using cached model: {model_name}")
+        local_path = hf_utils.get_local_model_path(model_name, str(save_dir))
+        args.checkpoint = str(next(local_path.glob("*.ckpt")))
+    else:
+        # Download from HF (only rank 0 downloads, others wait)
+        if is_rank_zero:
+            print(f"Downloading model from Hugging Face: {repo_id}")
+            checkpoint_path, config_path = hf_utils.download_model_from_hf(
+                repo_id, save_dir=str(save_dir), force=args.force_download
+            )
+            args.checkpoint = checkpoint_path
+        else:
+            # Wait for rank 0 to download
+            max_wait = 300  # 5 minutes
+            waited = 0
+            while not hf_utils.is_model_downloaded(model_name, str(save_dir)):
+                time.sleep(2)
+                waited += 2
+                if waited >= max_wait:
+                    raise TimeoutError("Timeout waiting for model download from rank 0")
+            local_path = hf_utils.get_local_model_path(model_name, str(save_dir))
+            args.checkpoint = str(next(local_path.glob("*.ckpt")))
 
     return args
 
@@ -528,13 +623,26 @@ def load_model_and_config(
         >>> model, conf = load_model_and_config(args, fabric)
         >>> print(conf.model.name)
     """
-    print("Loading model and configuration...")
+    if fabric.is_global_zero:
+        print("Loading model and configuration...")
     log_memory_usage(fabric, "Before model loading", verbose=verbose_memory)
 
     # Load configuration
     log_path = os.path.dirname(args.checkpoint)
     conf = OmegaConf.load(os.path.join(log_path, "configuration.yaml"))
     conf.data.chunk_size = args.chunk_size
+
+    # Apply path overrides from CLI arguments
+    conf = hf_utils.apply_path_overrides(conf, args)
+
+    # Validate required paths
+    path_errors = hf_utils.validate_required_paths(conf, args)
+    if path_errors:
+        if fabric.is_global_zero:
+            print("\nPath validation errors:")
+            for err in path_errors:
+                print(f"  - {err}")
+        raise ValueError("Required paths not configured. See errors above.")
 
     # Initialize model
     module = importlib.import_module(f"lib.models.{conf.model.name}")
@@ -579,7 +687,8 @@ def setup_dataloader(
         >>> dloader = setup_dataloader(conf, args, fabric)
         >>> print(f"Dataset size: {len(dloader.dataset)}")
     """
-    print("Setting up dataset...")
+    if fabric.is_global_zero:
+        print("Setting up dataset...")
 
     # Create dataset
     dset = dataset.EmbeddingDataset(
@@ -614,7 +723,8 @@ def setup_dataloader(
         )
     )
 
-    print(f"Dataset: {len(dset)} samples, batch size: {batch_size}")
+    if fabric.is_global_zero:
+        print(f"Dataset: {len(dset)} samples, batch size: {batch_size}")
     log_memory_usage(fabric, "After dataset setup", verbose=verbose_memory)
 
     return dloader
