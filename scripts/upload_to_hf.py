@@ -68,7 +68,7 @@ def find_best_checkpoint(model_dir: Path) -> Path:
     """
     Find the best checkpoint in a model directory.
 
-    Looks for 'best.ckpt', then any .ckpt file.
+    Looks for 'checkpoint_best.ckpt', then any .ckpt file.
 
     Args:
         model_dir: Path to model directory
