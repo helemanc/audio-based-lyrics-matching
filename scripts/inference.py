@@ -27,10 +27,10 @@ sys.path.insert(0, str(project_root))
 
 from utils import inference_utils
 
-
 #########################################################################################
 # Main
 #########################################################################################
+
 
 def main() -> None:
     """Main evaluation entry point."""
@@ -59,7 +59,9 @@ def main() -> None:
 
     try:
         # Load model and data
-        model, conf = inference_utils.load_model_and_config(args, fabric, verbose_memory)
+        model, conf = inference_utils.load_model_and_config(
+            args, fabric, verbose_memory
+        )
         dloader = inference_utils.setup_dataloader(conf, args, fabric, verbose_memory)
 
         # Evaluate
@@ -69,9 +71,16 @@ def main() -> None:
                     print("Evaluating with overlapping chunks...")
 
                 # Extract embeddings
-                _, _, _, _, chunks = inference_utils.extract_embeddings_with_checkpointing(
-                    model, dloader, args, fabric, checkpoint_manager,
-                    verbose_memory=verbose_memory, conf=conf
+                _, _, _, _, chunks = (
+                    inference_utils.extract_embeddings_with_checkpointing(
+                        model,
+                        dloader,
+                        args,
+                        fabric,
+                        checkpoint_manager,
+                        verbose_memory=verbose_memory,
+                        conf=conf,
+                    )
                 )
 
                 inference_utils.log_memory_usage(
@@ -80,22 +89,35 @@ def main() -> None:
 
                 # Evaluate chunks
                 aps, r1s, rpcs = inference_utils.evaluate_overlapping_chunks_fast(
-                    fabric, chunks, args, checkpoint_manager, verbose_memory=verbose_memory
+                    fabric,
+                    chunks,
+                    args,
+                    checkpoint_manager,
+                    verbose_memory=verbose_memory,
                 )
 
                 # Gather results
                 if fabric.is_global_zero:
                     print("Gathering final results...")
-                aps, r1s, rpcs = inference_utils.gather_results_safely(fabric, aps, r1s, rpcs)
+                aps, r1s, rpcs = inference_utils.gather_results_safely(
+                    fabric, aps, r1s, rpcs
+                )
 
             else:
                 if fabric.is_global_zero:
                     print("Standard evaluation mode...")
 
                 # Extract embeddings
-                q_c, q_i, q_z, q_m, _ = inference_utils.extract_embeddings_with_checkpointing(
-                    model, dloader, args, fabric, checkpoint_manager,
-                    verbose_memory=verbose_memory, conf=conf
+                q_c, q_i, q_z, q_m, _ = (
+                    inference_utils.extract_embeddings_with_checkpointing(
+                        model,
+                        dloader,
+                        args,
+                        fabric,
+                        checkpoint_manager,
+                        verbose_memory=verbose_memory,
+                        conf=conf,
+                    )
                 )
 
                 inference_utils.log_memory_usage(
@@ -108,7 +130,9 @@ def main() -> None:
                 )
 
                 # Gather results
-                aps, r1s, rpcs = inference_utils.gather_results_safely(fabric, aps, r1s, rpcs)
+                aps, r1s, rpcs = inference_utils.gather_results_safely(
+                    fabric, aps, r1s, rpcs
+                )
 
         # Report results (only on rank 0)
         if len(aps) > 0:
@@ -120,17 +144,17 @@ def main() -> None:
 
     except Exception as e:
         print(f"[GPU {fabric.global_rank}] Fatal error: {e}")
-        import traceback
-        import time
         import os
+        import time
+        import traceback
+
         traceback.print_exc()
 
         # Save crash report
         crash_report_path = os.path.join(
-            args.checkpoint_dir,
-            f"crash_report_rank_{fabric.global_rank}.txt"
+            args.checkpoint_dir, f"crash_report_rank_{fabric.global_rank}.txt"
         )
-        with open(crash_report_path, 'w') as f:
+        with open(crash_report_path, "w") as f:
             f.write(f"Crash at {time.ctime()}\n")
             f.write(f"Error: {e}\n")
             f.write(traceback.format_exc())
