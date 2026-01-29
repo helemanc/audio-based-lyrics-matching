@@ -512,7 +512,7 @@ audio-based-lyrics-matching/
 
 - [X] **Fix inference script**
 
-- [ ] **Checkpoints release**
+- [X] **Checkpoints release**
 
 - [ ] **Fix Triplet Loss and CLEWS loss**
 
