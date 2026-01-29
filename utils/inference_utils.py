@@ -817,81 +817,30 @@ def extract_embeddings_with_checkpointing(
             log_memory_usage(fabric, f"Batch {batch_idx}", verbose=verbose_memory)
 
             if args.use_overlapping_chunks and not use_avg:
-                clique_ids_batch, version_ids, embeddings, masks, chunk_info = batch
+                clique_ids, version_ids, embeddings, masks, chunk_info = batch
 
-                # Collate function returns:
-                # - clique_ids_batch: (batch_size,) - one clique per batch item
-                # - version_ids: (total_songs,) where total_songs = batch_size * n_per_class
-                # - embeddings: (total_songs, max_chunks, chunk_size, embed_dim)
-                # - masks: (total_songs, max_chunks, chunk_size)
-                # - chunk_info: {'num_chunks_per_song': List[int], 'max_chunks': int}
+                # Process all chunks through the model
+                embeddings = model.prepare(embeddings)
+                chunk_embeddings, _ = model.embed(embeddings, masks)
 
-                batch_size = clique_ids_batch.shape[0]
-                n_per_class = version_ids.shape[0] // batch_size
-                num_chunks_per_song = chunk_info["num_chunks_per_song"]  # List of ints
-                max_chunks = chunk_info["max_chunks"]
+                # Create song_ids for grouping
+                song_ids = (clique_ids * 1000000 + version_ids).cpu()
 
-                # Expand clique_ids to match version_ids: (batch_size,) -> (total_songs,)
-                clique_ids = (
-                    clique_ids_batch.unsqueeze(1).expand(-1, n_per_class).reshape(-1)
-                )
+                # Create chunk dictionaries
+                chunks = []
+                for idx in range(len(clique_ids)):
+                    chunks.append(
+                        {
+                            "clique_id": clique_ids[idx].item(),
+                            "version_id": version_ids[idx].item(),
+                            "embedding": chunk_embeddings[idx].cpu(),
+                            "mask": masks[idx].cpu(),
+                            "song_id": song_ids[idx].item(),
+                            "chunk_idx": chunk_info[idx][2],
+                        }
+                    )
 
-                # embeddings shape: (total_songs, max_chunks, chunk_size, embed_dim)
-                total_songs, _, chunk_size_dim, embed_dim = embeddings.shape
-
-                # Collect valid chunks and their metadata for batched processing
-                valid_chunks_emb = []
-                valid_chunks_mask = []
-                chunk_metadata = []  # (song_idx, chunk_idx, clique_id, version_id, song_id)
-
-                for song_idx in range(total_songs):
-                    n_chunks = num_chunks_per_song[song_idx]
-                    clique_id = clique_ids[song_idx].item()
-                    version_id = version_ids[song_idx].item()
-                    song_id = clique_id * 1000000 + version_id
-
-                    for chunk_idx in range(n_chunks):
-                        valid_chunks_emb.append(embeddings[song_idx, chunk_idx])
-                        valid_chunks_mask.append(masks[song_idx, chunk_idx])
-                        chunk_metadata.append(
-                            (song_idx, chunk_idx, clique_id, version_id, song_id)
-                        )
-
-                if valid_chunks_emb:
-                    # Batch process all valid chunks
-                    all_emb = torch.stack(
-                        valid_chunks_emb
-                    )  # (num_valid_chunks, chunk_size, embed_dim)
-                    all_mask = torch.stack(
-                        valid_chunks_mask
-                    )  # (num_valid_chunks, chunk_size)
-
-                    all_emb_prep = model.prepare(all_emb)
-                    all_chunk_embeddings, _ = model.embed(
-                        all_emb_prep, all_mask
-                    )  # (num_valid_chunks, embed_dim)
-
-                    # Create chunk dictionaries
-                    chunks = []
-                    for i, (
-                        song_idx,
-                        chunk_idx,
-                        clique_id,
-                        version_id,
-                        song_id,
-                    ) in enumerate(chunk_metadata):
-                        chunks.append(
-                            {
-                                "clique_id": clique_id,
-                                "version_id": version_id,
-                                "embedding": all_chunk_embeddings[i].cpu(),
-                                "mask": valid_chunks_mask[i].cpu(),
-                                "song_id": song_id,
-                                "chunk_idx": chunk_idx,
-                            }
-                        )
-
-                    all_data["chunks"].extend(chunks)
+                all_data["chunks"].extend(chunks)
 
                 unique_songs = len(set(c["song_id"] for c in all_data["chunks"]))
                 pbar.set_postfix(
