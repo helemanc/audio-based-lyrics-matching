@@ -76,7 +76,7 @@ def find_best_checkpoint(model_dir: Path) -> Path:
     Returns:
         Path to checkpoint file
     """
-    best_ckpt = model_dir / "best.ckpt"
+    best_ckpt = model_dir / "checkpoint_best.ckpt"
     if best_ckpt.exists():
         return best_ckpt
 
@@ -132,7 +132,12 @@ def upload_single_model(
 
             # Load config to get model info
             conf = OmegaConf.load(config_path)
-            model_name = conf.model.name.upper() if hasattr(conf, "model") else "Model"
+            # Normalize model name: whisper-ft -> wealy
+            raw_model_name = conf.model.name if hasattr(conf, "model") else "model"
+            if raw_model_name in ("whisper-ft", "whisper_ft"):
+                model_name = "WEALY"
+            else:
+                model_name = raw_model_name.upper()
 
             readme_content = hf_utils.create_model_card(
                 repo_id=repo_id,
