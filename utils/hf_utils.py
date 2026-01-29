@@ -273,7 +273,7 @@ def sanitize_config_for_upload(conf: DictConfig) -> DictConfig:
     conf = OmegaConf.to_container(conf, resolve=True)
     conf = OmegaConf.create(conf)
 
-    # Paths to sanitize
+    # Paths to sanitize - key name -> placeholder value
     path_placeholders = {
         "cache": "/path/to/cache",
         "logs": "/path/to/logs",
@@ -288,26 +288,96 @@ def sanitize_config_for_upload(conf: DictConfig) -> DictConfig:
         "discogs_vi_data": "/path/to/discogs-vi",
     }
 
-    def sanitize_paths(obj: Any, prefix: str = "") -> Any:
-        if isinstance(obj, DictConfig) or isinstance(obj, dict):
+    # Prefixes that indicate personal/machine-specific paths
+    personal_path_prefixes = (
+        "/scratch",
+        "/home/",
+        "/Users/",
+        "/tmp/",
+        "/data/",
+    )
+
+    def is_personal_path(value: Any) -> bool:
+        """Check if a value looks like a personal path."""
+        if not isinstance(value, str):
+            return False
+        return value.startswith(personal_path_prefixes)
+
+    def sanitize_dict(obj: Any) -> Any:
+        """Recursively sanitize all paths in a dict/DictConfig."""
+        if isinstance(obj, (DictConfig, dict)):
             for key in list(obj.keys()):
+                value = obj[key]
+                # If key is in our known path keys, use placeholder
                 if key in path_placeholders:
                     obj[key] = path_placeholders[key]
-                elif isinstance(obj[key], (dict, DictConfig)):
-                    sanitize_paths(obj[key], f"{prefix}.{key}")
+                # If value looks like a personal path, sanitize it
+                elif is_personal_path(value):
+                    obj[key] = f"/path/to/{key}"
+                # Recurse into nested dicts
+                elif isinstance(value, (dict, DictConfig)):
+                    sanitize_dict(value)
         return obj
 
     # Sanitize top-level path section
     if "path" in conf:
-        sanitize_paths(conf.path)
+        sanitize_dict(conf.path)
 
     # Sanitize data.path section if it exists
     if "data" in conf and "path" in conf.data:
-        sanitize_paths(conf.data.path)
+        sanitize_dict(conf.data.path)
 
     # Remove checkpoint path (will be set at runtime)
     if "checkpoint" in conf:
         conf.checkpoint = None
+
+    # Sanitize jobname to remove personal identifiers
+    if "jobname" in conf:
+        conf.jobname = "wealy_model"
+
+    # Fix model name: whisper-ft -> wealy (they're the same architecture)
+    if "model" in conf and "name" in conf.model:
+        if conf.model.name in ("whisper-ft", "whisper_ft"):
+            conf.model.name = "wealy"
+
+    # Ensure data.path section exists and is sanitized
+    if "data" in conf:
+        if "path" not in conf.data:
+            # Create data.path mirroring the top-level path section
+            conf.data.path = OmegaConf.create({})
+        # Copy and sanitize path placeholders to data.path
+        for key, placeholder in path_placeholders.items():
+            if key not in conf.data.path:
+                conf.data.path[key] = placeholder
+            else:
+                conf.data.path[key] = placeholder
+
+    # Add pytorch section if missing (with safe defaults)
+    if "pytorch" not in conf:
+        conf.pytorch = OmegaConf.create(
+            {
+                "cudnn_benchmark": False,
+                "cudnn_deterministic": True,
+                "float32_matmul_precision": "medium",
+                "detect_anomaly": False,
+            }
+        )
+
+    # Add early_stopping section if missing
+    if "early_stopping" not in conf:
+        conf.early_stopping = OmegaConf.create(
+            {
+                "enabled": False,
+                "patience": 10,
+                "mode": "max",
+                "min_delta": 0.0,
+                "metric": "m_MAP",
+            }
+        )
+
+    # Remove conf path (training config reference)
+    if "conf" in conf:
+        del conf["conf"]
 
     return conf
 
@@ -503,11 +573,14 @@ tags:
 - version-identification
 - audio
 - lyrics
+- wealy
 ---
 
 # {model_name}
 
 {description}
+
+This is a WEALY (WEakly-supervised Audio-LYrics) model for music version identification.
 
 ## Usage
 
