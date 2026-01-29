@@ -18,15 +18,14 @@ Example usage:
 """
 
 import os
-import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from omegaconf import DictConfig, OmegaConf
 
 # Hugging Face Hub is optional - only needed for download/upload
 try:
-    from huggingface_hub import HfApi, hf_hub_download, snapshot_download
+    from huggingface_hub import HfApi, snapshot_download
 
     HF_AVAILABLE = True
 except ImportError:
