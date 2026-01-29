@@ -20,7 +20,7 @@
 # USAGE EXAMPLES:
 #   See bottom of file for complete command-line examples
 
-jobname: "whisper_training"
+jobname: "wealy_training"
 seed: 42
 checkpoint: null
 limit_batches: null  # Set to integer to limit batches for debugging
