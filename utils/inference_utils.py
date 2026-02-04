@@ -116,20 +116,31 @@ def setup_configuration() -> Any:
     if args.model_name is not None:
         args = _resolve_hf_model(args)
 
-    # Derive checkpoint_dir from training checkpoint path if not explicitly set
-    if args.checkpoint_dir is None and hasattr(args, "checkpoint") and args.checkpoint:
+    # Get checkpoint path (might be from CLI or set by _resolve_hf_model)
+    # Use getattr for robust OmegaConf compatibility
+    checkpoint_path = getattr(args, "checkpoint", None)
+
+    # Derive checkpoint_dir from checkpoint path if not explicitly set
+    if args.checkpoint_dir is None and checkpoint_path:
+        # Ensure we have a string path (OmegaConf might wrap it)
+        checkpoint_str = str(checkpoint_path)
         # Use absolute path to ensure checkpoint_dir is in the model's folder
-        checkpoint_abs = os.path.abspath(args.checkpoint)
+        checkpoint_abs = os.path.abspath(checkpoint_str)
         log_dir = os.path.dirname(checkpoint_abs)
         args.checkpoint_dir = os.path.join(log_dir, "eval_checkpoints")
+
+        if _is_rank_zero():
+            print(f"Checkpoint dir derived from checkpoint path: {args.checkpoint_dir}")
 
     # Fallback to default if still None (use project root's logs folder)
     if args.checkpoint_dir is None:
         project_root = Path(__file__).parent.parent
         args.checkpoint_dir = str(project_root / "logs" / "eval_checkpoints")
+        if _is_rank_zero():
+            print(f"Using fallback checkpoint dir: {args.checkpoint_dir}")
 
     # Validate that checkpoint is set
-    if not hasattr(args, "checkpoint") or args.checkpoint is None:
+    if checkpoint_path is None:
         raise ValueError(
             "Must provide either 'checkpoint=/path/to/checkpoint.ckpt' "
             "or 'model_name=username/model-name'"
@@ -610,18 +621,6 @@ def load_model_and_config(
 ) -> Tuple[nn.Module, DictConfig]:
     """
     Load model and configuration from checkpoint.
-
-    Args:
-        args: Configuration with checkpoint path
-        fabric: Fabric instance
-        verbose_memory: Whether to log memory usage
-
-    Returns:
-        Tuple of (model, configuration)
-
-    Example:
-        >>> model, conf = load_model_and_config(args, fabric)
-        >>> print(conf.model.name)
     """
     if fabric.is_global_zero:
         print("Loading model and configuration...")
@@ -644,9 +643,71 @@ def load_model_and_config(
                 print(f"  - {err}")
         raise ValueError("Required paths not configured. See errors above.")
 
-    # Initialize model
-    module = importlib.import_module(f"lib.models.{conf.model.name}")
+    # STEP 1: Inspect checkpoint BEFORE initializing model
+    # This allows us to detect old architectures and adjust config accordingly
+    ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
 
+    # Get model state dict
+    if "model" in ckpt:
+        old_state_dict = ckpt["model"]
+    else:
+        old_state_dict = ckpt
+
+    # Check if old sbert_mlp keys exist in the checkpoint
+    has_old_keys = any("sbert_mlp" in k for k in old_state_dict.keys())
+
+    if has_old_keys:
+        # This is an old SBERT checkpoint with MLP architecture
+        # The checkpoint expects use_avg_pooling=True, so update config to match
+        if fabric.is_global_zero:
+            print("\n" + "=" * 70)
+            print("CHECKPOINT ARCHITECTURE DETECTION")
+            print("=" * 70)
+            print("Detected old SBERT checkpoint with 'sbert_mlp' keys.")
+            print("This checkpoint uses MLP architecture (use_avg_pooling=True).")
+            print("")
+            print(f"Config setting: use_avg_pooling={conf.data.use_avg_pooling}")
+            print("Updating config to match checkpoint architecture...")
+            print("=" * 70 + "\n")
+
+        # Update config to match checkpoint architecture
+        conf.data.use_avg_pooling = True
+
+        # Remap sbert_mlp -> avg_mlp for the checkpoint keys
+        new_state_dict = {}
+        for k, v in old_state_dict.items():
+            new_key = k.replace("sbert_mlp", "avg_mlp")
+            new_state_dict[new_key] = v
+
+        # Update the state dict in the checkpoint
+        if "model" in ckpt:
+            ckpt["model"] = new_state_dict
+        else:
+            ckpt = new_state_dict
+
+    # STEP 2: Validate overlapping chunks with averaged embeddings
+    if args.use_overlapping_chunks and conf.data.use_avg_pooling:
+        if fabric.is_global_zero:
+            print("\n" + "=" * 70)
+            print("WARNING: Overlapping chunks not supported with averaged embeddings!")
+            print("=" * 70)
+            print("Averaged embedding models (like SBERT) produce a single embedding")
+            print("per song, not temporal sequences. Overlapping chunks require")
+            print("temporal embeddings (like Whisper).")
+            print("")
+            print("Disabling overlapping chunks...")
+            print("=" * 70 + "\n")
+        args.use_overlapping_chunks = False
+
+    # STEP 2.5: Normalize legacy model names to unified 'wealy' architecture
+    # Old names: whisper-ft, wealy-cls -> New unified name: wealy
+    if conf.model.name in ("whisper-ft", "whisper_ft", "wealy-cls", "wealy_cls"):
+        if fabric.is_global_zero:
+            print(f"Normalizing model name: {conf.model.name} -> wealy")
+        conf.model.name = "wealy"
+
+    # STEP 3: Initialize model with corrected config
+    module = importlib.import_module(f"lib.models.{conf.model.name}")
     with fabric.init_module():
         model = module.Model(
             conf.model,
@@ -658,13 +719,41 @@ def load_model_and_config(
     model = fabric.setup(model)
     model.mark_forward_method("embed")
 
-    # Load checkpoint
+    # STEP 4: Load checkpoint (with remapped keys if applicable)
     state = pytorch_utils.get_state(model, None, None, conf, None, None, None)
-    fabric.load(args.checkpoint, state)
+
+    if has_old_keys:
+        # Load the remapped checkpoint
+        # Preserve all checkpoint keys (optim, etc.), only remap model weights
+        import tempfile
+
+        # Reload full checkpoint to preserve all keys
+        full_ckpt_reload = torch.load(
+            args.checkpoint, map_location="cpu", weights_only=False
+        )
+
+        # Update only the model weights with remapped keys
+        if "model" in full_ckpt_reload:
+            full_ckpt_reload["model"] = new_state_dict
+        else:
+            # If checkpoint is just the model dict, wrap it
+            full_ckpt_reload = {"model": new_state_dict}
+
+        # Save and load through fabric
+        with tempfile.NamedTemporaryFile(suffix=".ckpt", delete=False) as tmp:
+            torch.save(full_ckpt_reload, tmp.name)
+            fabric.load(tmp.name, state, strict=False)
+            os.unlink(tmp.name)
+
+        if fabric.is_global_zero:
+            print("✓ Successfully loaded remapped checkpoint with MLP architecture\n")
+    else:
+        # No old keys, load normally
+        fabric.load(args.checkpoint, state)
+
     model = pytorch_utils.set_state(state)[0].eval()
 
     log_memory_usage(fabric, "After model loading", verbose=verbose_memory)
-
     return model, conf
 
 
@@ -1255,6 +1344,8 @@ def evaluate_standard_mode(
     """
     Evaluate model with standard single-embedding approach.
 
+    Uses the EXACT same evaluation pattern as training validation for consistency.
+
     Args:
         model: Model for evaluation
         q_c: Query clique IDs
@@ -1268,75 +1359,36 @@ def evaluate_standard_mode(
     Returns:
         Tuple of (aps, r1s, rpcs) tensors
     """
-    print("Gathering candidate embeddings...")
+    if fabric.is_global_zero:
+        print("Gathering embeddings across GPUs (same as training validation)...")
 
-    # Gather candidates
-    cands = []
-    for i, tensor in enumerate(
-        [
-            q_c.to(fabric.device),
-            q_i.to(fabric.device),
-            q_z.to(fabric.device),
-            q_m.to(fabric.device),
-        ]
-    ):
-        print(f"[GPU {fabric.global_rank}] Gathering tensor {i + 1}/4")
-        gathered = safe_all_gather_with_timeout(fabric, tensor, timeout_seconds=300)
+    # Gather all embeddings across GPUs (same as training validation)
+    fabric.barrier()
+    all_c = fabric.all_gather(q_c.to(fabric.device))
+    all_i = fabric.all_gather(q_i.to(fabric.device))
+    all_z = fabric.all_gather(q_z.to(fabric.device))
 
-        if gathered is None:
-            print(
-                f"[GPU {fabric.global_rank}] Failed to gather tensor {i}, using local only"
-            )
-            cands.append(tensor)
-        else:
-            cands.append(torch.cat(gathered.unbind()))
+    all_c = torch.cat(torch.unbind(all_c, dim=0), dim=0)
+    all_i = torch.cat(torch.unbind(all_i, dim=0), dim=0)
+    all_z = torch.cat(torch.unbind(all_z, dim=0), dim=0)
 
-    # Evaluate queries
-    print("Computing retrieval metrics...")
-    results = []
+    if fabric.is_global_zero:
+        print(
+            f"Computing retrieval metrics: {len(q_z)} queries vs {len(all_z)} candidates..."
+        )
+        print("Using EXACT same eval.compute() call as training validation")
 
-    # Load checkpoint if available
-    eval_checkpoint = (
-        checkpoint_manager.load_evaluation_checkpoint()
-        if checkpoint_manager.enabled
-        else None
+    # Use EXACT same eval.compute call as training validation
+    aps, r1s, rpcs = eval.compute(
+        model,
+        q_c.to(fabric.device),
+        q_i.to(fabric.device),
+        q_z.to(fabric.device),
+        all_c,
+        all_i,
+        all_z,
+        distance_fn="cosine",
     )
-    start_idx = eval_checkpoint["query_idx"] + 1 if eval_checkpoint else 0
-    if eval_checkpoint:
-        results = eval_checkpoint["partial_results"]
-
-    pbar = tqdm(
-        range(start_idx, len(q_z)),
-        desc="Evaluating queries",
-        disable=not fabric.is_global_zero,
-    )
-
-    for n in pbar:
-        try:
-            result = eval.compute(
-                model,
-                q_c[n : n + 1].to(fabric.device),
-                q_i[n : n + 1].to(fabric.device),
-                q_z[n : n + 1].to(fabric.device),
-                *cands,
-                batch_size_candidates=1024,
-            )
-            results.append(result)
-
-            # Memory cleanup
-            if n % 10 == 0:
-                torch.cuda.empty_cache()
-
-            # Checkpoint periodically
-            if checkpoint_manager.enabled and (n + 1) % 100 == 0:
-                checkpoint_manager.save_evaluation_checkpoint(n, results, None, args)
-
-        except Exception as e:
-            print(f"[GPU {fabric.global_rank}] Error in query {n}: {e}")
-            continue
-
-    # Stack results
-    aps, r1s, rpcs = map(torch.stack, zip(*results))
 
     return aps, r1s, rpcs
 

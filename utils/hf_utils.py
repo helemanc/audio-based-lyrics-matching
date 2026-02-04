@@ -18,14 +18,15 @@ Example usage:
 """
 
 import os
+import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from omegaconf import DictConfig, OmegaConf
 
 # Hugging Face Hub is optional - only needed for download/upload
 try:
-    from huggingface_hub import HfApi, snapshot_download
+    from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
     HF_AVAILABLE = True
 except ImportError:
@@ -57,12 +58,14 @@ MODEL_REGISTRY = {
     # SHS100K models
     "wealy-whisper-shs": f"{DEFAULT_HF_ORG}/wealy-whisper-shs",
     "wealy-sbert-shs": f"{DEFAULT_HF_ORG}/wealy-sbert-shs",
+    "wealy-asr-sbert-transformer-shs": f"{DEFAULT_HF_ORG}/wealy-asr-sbert-transformer-shs",
     "wealy-whisper-en-shs": f"{DEFAULT_HF_ORG}/wealy-whisper-en-shs",
     "wealy-avgembmlp-shs": f"{DEFAULT_HF_ORG}/wealy-avgembmlp-shs",
     "wealy-cls-shs": f"{DEFAULT_HF_ORG}/wealy-cls-shs",
     # Lyric Covers models
     "wealy-whisper-lyc": f"{DEFAULT_HF_ORG}/wealy-whisper-lyc",
     "wealy-sbert-lyc": f"{DEFAULT_HF_ORG}/wealy-sbert-lyc",
+    "wealy-asr-sbert-transformer-lyc": f"{DEFAULT_HF_ORG}/wealy-asr-sbert-transformer-lyc",
     # Discogs-VI models
     "wealy-whisper-dvi": f"{DEFAULT_HF_ORG}/wealy-whisper-dvi",
 }
@@ -71,11 +74,13 @@ MODEL_REGISTRY = {
 LOCAL_TO_HF_NAME = {
     "wealy_whisper_shs": "wealy-whisper-shs",
     "wealy_sbert_shs": "wealy-sbert-shs",
+    "wealy_shs_sbert_transformer": "wealy-asr-sbert-transformer-shs",
     "wealy_whisper_en_shs": "wealy-whisper-en-shs",
     "wealy_avgembmlp_shs": "wealy-avgembmlp-shs",
     "wealy_cls_shs": "wealy-cls-shs",
     "wealy_whisper_lyc": "wealy-whisper-lyc",
     "wealy_sbert_lyc": "wealy-sbert-lyc",
+    "wealy_lyc_sbert_transformer": "wealy-asr-sbert-transformer-lyc",
     "wealy_whisper_dvi": "wealy-whisper-dvi",
 }
 
@@ -334,9 +339,9 @@ def sanitize_config_for_upload(conf: DictConfig) -> DictConfig:
     if "jobname" in conf:
         conf.jobname = "wealy_model"
 
-    # Fix model name: whisper-ft -> wealy (they're the same architecture)
+    # Fix model name: whisper-ft/wealy-cls -> wealy (unified architecture)
     if "model" in conf and "name" in conf.model:
-        if conf.model.name in ("whisper-ft", "whisper_ft"):
+        if conf.model.name in ("whisper-ft", "whisper_ft", "wealy-cls", "wealy_cls"):
             conf.model.name = "wealy"
 
     # Ensure data.path section exists and is sanitized
