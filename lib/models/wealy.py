@@ -9,7 +9,7 @@ models/wealy.py
 Interface:
     - Model(conf, sr) constructor
     - prepare() method for preprocessing
-    - embed() method for feature extraction  
+    - embed() method for feature extraction
     - loss() method for contrastive learning
 """
 
@@ -21,22 +21,21 @@ import torch.nn as nn
 import torch.nn.functional as F
 from omegaconf import DictConfig
 
-from lib import layers
-from lib import losses
+from lib import layers, losses
 
 
 class SinusoidalPositionalEncoding(nn.Module):
     """
     Standard sinusoidal positional encoding from 'Attention Is All You Need'.
-    
+
     Adds position information to embeddings using sine and cosine functions
     of different frequencies. This allows the model to learn to attend by
     relative positions.
-    
+
     Attributes:
         dropout: Dropout layer applied after adding positional encoding
         pe: Positional encoding buffer of shape (1, max_length, hidden_dim)
-    
+
     Example:
         >>> pos_enc = SinusoidalPositionalEncoding(hidden_dim=512, max_length=1000)
         >>> x = torch.randn(32, 100, 512)  # (batch, seq_len, hidden_dim)
@@ -44,16 +43,13 @@ class SinusoidalPositionalEncoding(nn.Module):
         >>> x_with_pos.shape
         torch.Size([32, 100, 512])
     """
-    
+
     def __init__(
-        self, 
-        hidden_dim: int, 
-        max_length: int = 5000, 
-        dropout: float = 0.1
+        self, hidden_dim: int, max_length: int = 5000, dropout: float = 0.1
     ) -> None:
         """
         Initialize sinusoidal positional encoding.
-        
+
         Args:
             hidden_dim: Dimension of the embeddings
             max_length: Maximum sequence length to support
@@ -61,29 +57,28 @@ class SinusoidalPositionalEncoding(nn.Module):
         """
         super().__init__()
         self.dropout = nn.Dropout(dropout)
-        
+
         # Create positional encoding matrix
         pe = torch.zeros(max_length, hidden_dim)
         position = torch.arange(0, max_length).unsqueeze(1).float()
-        
+
         div_term = torch.exp(
-            torch.arange(0, hidden_dim, 2).float() * 
-            -(math.log(10000.0) / hidden_dim)
+            torch.arange(0, hidden_dim, 2).float() * -(math.log(10000.0) / hidden_dim)
         )
-        
+
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        
+
         # Register as buffer (not a parameter, but part of the model state)
-        self.register_buffer('pe', pe.unsqueeze(0))  # (1, max_length, hidden_dim)
-    
+        self.register_buffer("pe", pe.unsqueeze(0))  # (1, max_length, hidden_dim)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Add positional encoding to input embeddings.
-        
+
         Args:
             x: Input embeddings of shape (batch_size, seq_len, hidden_dim)
-        
+
         Returns:
             Embeddings with positional encoding added, same shape as input
         """
@@ -95,53 +90,71 @@ class SinusoidalPositionalEncoding(nn.Module):
 class Model(nn.Module):
     """
     Universal Version Identification Model.
-    
+
     Uses transformer architecture for all embedding types:
     1. SBERT embeddings (B, 1, 384): Treated like temporal sequence
-    2. Whisper embeddings (B, T, 1280): Full temporal pipeline  
+    2. Whisper embeddings (B, T, 1280): Full temporal pipeline
     3. Averaged embeddings (B, 384/1280): Expand dims and process
-    
+
     The model supports two modes:
     - Temporal mode (use_avg_pooling=False): Full transformer pipeline with
-      optional convolutional downsampling, positional encoding, and pooling
+      optional convolutional downsampling, positional encoding, and either
+      CLS token extraction or pooling
     - Averaged mode (use_avg_pooling=True): Simple MLP for pre-averaged embeddings
-    
+
+    CLS Token Support:
+    When use_cls_token=True (only in temporal mode), the model:
+    - Prepends a learnable [CLS] token to the input sequence
+    - Processes the entire sequence through the transformer
+    - Extracts the final representation from the CLS token position
+    This follows the BERT-style architecture for sequence representation.
+
     Attributes:
         sr: Sample rate (for compatibility)
         eps: Small epsilon value for numerical stability
         embedding_type: Type of embeddings ('sbert', 'last_hidden_states', etc.)
         conf: Configuration object
         use_avg_pooling: Whether to use averaged embedding mode
+        use_cls_token: Whether to use CLS token extraction (temporal mode only)
         working_dim: Internal working dimension
-        
+
     Example:
         >>> from omegaconf import OmegaConf
+        >>> # Standard temporal model with pooling
         >>> conf = OmegaConf.create({
         ...     'input_channels': 1280,
         ...     'hidden_dim': 512,
         ...     'zdim': 256,
         ...     'conv_blocks': 2,
         ...     'num_transformer_blocks': 4,
-        ...     'num_heads': 8
+        ...     'num_heads': 8,
+        ...     'use_cls_token': False
         ... })
         >>> model = Model(conf, use_avg_pooling=False, embedding_type='last_hidden_states')
         >>> x = torch.randn(4, 100, 1280)  # (batch, time, features)
         >>> z, _ = model.embed(x)
         >>> z.shape
         torch.Size([4, 256])
+
+        >>> # Model with CLS token
+        >>> conf.use_cls_token = True
+        >>> model_cls = Model(conf, use_avg_pooling=False, embedding_type='last_hidden_states')
+        >>> z_cls, _ = model_cls.embed(x)
+        >>> z_cls.shape
+        torch.Size([4, 256])
     """
-    
+
     def __init__(
-        self, 
-        conf: DictConfig, 
-        use_avg_pooling: bool, 
-        embedding_type: str, 
-        sr: int = 16000, 
-        eps: float = 1e-6
+        self,
+        conf: DictConfig,
+        use_avg_pooling: bool,
+        embedding_type: str,
+        sr: int = 16000,
+        eps: float = 1e-6,
     ) -> None:
         """
         Initialize the model.
-        
+
         Args:
             conf: Configuration object containing model hyperparameters:
                 - input_channels: Input dimension (e.g., 1280 for Whisper, 384 for SBERT)
@@ -156,10 +169,11 @@ class Model(nn.Module):
                 - dropout: Dropout probability
                 - pool_type: Pooling type ('gempool' or 'meanpool')
                 - positional_encoding: Config for positional encoding
+                - use_cls_token: If True, use learnable CLS token instead of pooling
                 - loss: Loss function configuration
             use_avg_pooling: If True, use simple MLP for averaged embeddings.
                 If False, use full temporal transformer pipeline
-            embedding_type: Type of embeddings ('sbert', 'last_hidden_states', 
+            embedding_type: Type of embeddings ('sbert', 'last_hidden_states',
                 'encoder', 'evaluation_enc_dec')
             sr: Sample rate (for compatibility with audio processing)
             eps: Small epsilon for numerical stability
@@ -170,23 +184,37 @@ class Model(nn.Module):
         self.embedding_type = embedding_type
         self.conf = conf
         self.use_avg_pooling = use_avg_pooling
-        
+
         # Working dimension for all modes
         self.working_dim: int = conf.hidden_dim
-        
+
+        # CLS token configuration
+        self.use_cls_token: bool = getattr(conf, "use_cls_token", False)
+
         # Build architecture based on mode
         if not self.use_avg_pooling:
             # Full temporal pipeline for all embedding types
             self.conv_layers = self._build_conv_layers(conf)
             self.pre_transformer_proj = nn.Linear(conf.input_channels, self.working_dim)
+
+            # CLS token (learnable parameter)
+            if self.use_cls_token:
+                self.cls_token = nn.Parameter(torch.randn(1, 1, self.working_dim))
+                # Initialize with small values
+                nn.init.normal_(self.cls_token, std=0.02)
+
             self.positional_encoding = self._build_positional_encoding(conf)
             self.transformer = self._build_transformer()
-            self.pool = self._build_pooling_layer(conf)
+
+            # Only create pooling layer if not using CLS token
+            if not self.use_cls_token:
+                self.pool = self._build_pooling_layer(conf)
+
             self.proj = nn.Linear(self.working_dim, conf.zdim, bias=False)
         else:
             # Simple MLP for averaged embeddings (any type)
             self.avg_mlp = self._build_avg_mlp(conf)
-        
+
         # Loss function setup
         self._loss_fn: Optional[nn.Module] = None
         self._setup_loss_function()
@@ -194,12 +222,12 @@ class Model(nn.Module):
     def _build_avg_mlp(self, conf: DictConfig) -> nn.Sequential:
         """
         Build MLP for averaged embeddings (any type).
-        
+
         Creates a feedforward network with:
         - Input projection from embedding dimension to working dimension
         - Optional hidden layers with ReLU and dropout
         - Output projection to final embedding dimension
-        
+
         Args:
             conf: Configuration object with:
                 - input_channels: Input dimension
@@ -207,136 +235,133 @@ class Model(nn.Module):
                 - zdim: Output dimension
                 - dropout: Dropout probability
                 - avg_mlp_hidden_layers: Number of hidden layers (default: 2)
-        
+
         Returns:
             Sequential module containing the MLP layers
         """
         layers_list = []
-        
+
         # Input projection
         layers_list.append(nn.Linear(conf.input_channels, self.working_dim))
         layers_list.append(nn.ReLU())
         layers_list.append(nn.Dropout(conf.dropout))
-        
+
         # Hidden layers
-        num_hidden = getattr(conf, 'avg_mlp_hidden_layers', 2)
+        num_hidden = getattr(conf, "avg_mlp_hidden_layers", 2)
         for _ in range(num_hidden):
             layers_list.append(nn.Linear(self.working_dim, self.working_dim))
             layers_list.append(nn.ReLU())
             layers_list.append(nn.Dropout(conf.dropout))
-        
+
         # Output projection
         layers_list.append(nn.Linear(self.working_dim, conf.zdim))
-        
+
         return nn.Sequential(*layers_list)
-    
+
     def _build_pooling_layer(self, conf: DictConfig) -> nn.Module:
         """
         Build pooling layer based on configuration.
-        
+
         Supports:
         - GeMPool (Generalized Mean Pooling): Learnable pooling with parameter p
         - MeanPool: Simple average pooling across time dimension
-        
+
         Args:
             conf: Configuration object with pool_type attribute
-        
+
         Returns:
             Pooling layer module
-        
+
         Raises:
             ValueError: If pool_type is not recognized
         """
-        pool_type = getattr(conf, 'pool_type', 'gempool').lower()
-        
-        if pool_type == 'gempool':
+        pool_type = getattr(conf, "pool_type", "gempool").lower()
+
+        if pool_type == "gempool":
             return layers.GeMPool(ncha=self.working_dim)
-        elif pool_type == 'meanpool':
+        elif pool_type == "meanpool":
             return layers.MeanPool()
         else:
             raise ValueError(
-                f"Unknown pooling type: {pool_type}. "
-                f"Supported: 'gempool', 'meanpool'"
+                f"Unknown pooling type: {pool_type}. Supported: 'gempool', 'meanpool'"
             )
-    
+
     def _build_positional_encoding(self, conf: DictConfig) -> nn.Module:
         """
         Build positional encoding based on configuration.
-        
+
         Args:
             conf: Configuration object with positional_encoding settings:
                 - enabled: Whether to use positional encoding
                 - type: Type of encoding ('sinusoidal' or 'none')
                 - max_length: Maximum sequence length to support
                 - dropout: Dropout probability
-        
+
         Returns:
             Positional encoding module or Identity if disabled
         """
-        pos_config = getattr(conf, 'positional_encoding', None)
-        
-        if not pos_config or not getattr(pos_config, 'enabled', False):
+        pos_config = getattr(conf, "positional_encoding", None)
+
+        if not pos_config or not getattr(pos_config, "enabled", False):
             return nn.Identity()
-        
-        pos_type = getattr(pos_config, 'type', 'none').lower()
-        max_length = getattr(pos_config, 'max_length', 5000)
-        dropout = getattr(pos_config, 'dropout', 0.1)
-        
-        if pos_type == 'sinusoidal':
+
+        pos_type = getattr(pos_config, "type", "none").lower()
+        max_length = getattr(pos_config, "max_length", 5000)
+        dropout = getattr(pos_config, "dropout", 0.1)
+
+        if pos_type == "sinusoidal":
             return SinusoidalPositionalEncoding(
-                hidden_dim=self.working_dim,
-                max_length=max_length,
-                dropout=dropout
+                hidden_dim=self.working_dim, max_length=max_length, dropout=dropout
             )
         else:
             return nn.Identity()
-    
+
     def _build_conv_layers(self, conf: DictConfig) -> nn.Module:
         """
         Build convolutional layers for temporal downsampling.
-        
+
         Creates a sequence of ConvBlocks that progressively downsample
         the temporal dimension while preserving feature dimension.
         Useful for reducing computational cost in long sequences.
-        
+
         Args:
             conf: Configuration object with:
                 - conv_blocks: Number of convolutional blocks (0 to disable)
                 - input_channels: Feature dimension
                 - conv_kernel_size: Kernel size for convolutions
                 - conv_stride: Stride for downsampling
-        
+
         Returns:
             Sequential module of ConvBlocks or Identity if disabled
         """
         if not conf.conv_blocks:
             return nn.Identity()
-            
+
         layers_list = []
         channels = conf.input_channels
-        
+
         for _ in range(conf.conv_blocks):
             layers_list.append(
                 layers.ConvBlock(
-                    in_channels=channels, 
-                    out_channels=channels, 
-                    kernel_size=conf.conv_kernel_size, 
-                    stride=conf.conv_stride
+                    in_channels=channels,
+                    out_channels=channels,
+                    kernel_size=conf.conv_kernel_size,
+                    stride=conf.conv_stride,
                 )
             )
-            
+
         return nn.Sequential(*layers_list)
-    
+
     def _build_transformer(self) -> nn.TransformerEncoder:
         """
         Build the transformer encoder.
-        
+
         Creates a stack of transformer encoder layers with:
         - Multi-head self-attention
         - Feedforward network
         - Layer normalization (pre-norm architecture)
         - Residual connections
-        
+
         Returns:
             TransformerEncoder module with configured number of layers
         """
@@ -346,92 +371,89 @@ class Model(nn.Module):
             dim_feedforward=self.conf.ff_dim,
             dropout=self.conf.dropout,
             batch_first=True,
-            norm_first=True
+            norm_first=True,
         )
         return nn.TransformerEncoder(
-            encoder_layer, 
-            num_layers=self.conf.num_transformer_blocks
+            encoder_layer, num_layers=self.conf.num_transformer_blocks
         )
-    
+
     def _setup_loss_function(self) -> None:
         """
         Setup the contrastive loss function based on configuration.
-        
+
         Supported loss types:
         - ntxent: Normalized Temperature-scaled Cross Entropy (NT-Xent)
         - triplet: Triplet loss with margin
         - clews: CLEWS contrastive loss
-        
+
         Raises:
             ValueError: If loss type is not recognized
         """
-        loss_type = getattr(self.conf.loss, 'type', 'ntxent')
-        
-        if loss_type == 'ntxent':
+        loss_type = getattr(self.conf.loss, "type", "ntxent")
+
+        if loss_type == "ntxent":
             self._loss_fn = losses.NTXentLoss(
-                temperature=getattr(self.conf.loss, 'temperature', 0.1)
+                temperature=getattr(self.conf.loss, "temperature", 0.1)
             )
-        elif loss_type == 'triplet':
+        elif loss_type == "triplet":
             self._loss_fn = losses.TripletLoss(
-                margin=getattr(self.conf.loss, 'margin', 0.1),
-                eps=self.eps
+                margin=getattr(self.conf.loss, "margin", 0.1), eps=self.eps
             )
-        elif loss_type == 'clews':
+        elif loss_type == "clews":
             self._loss_fn = losses.CLEWSLoss()
         else:
             raise ValueError(f"Unknown loss type: {loss_type}")
-    
+
     def get_shingle_params(self) -> Tuple[float, float]:
         """
         Return shingling parameters for compatibility.
-        
+
         Returns:
             Tuple of (shingle_length, shingle_hop) in seconds
         """
         return 20.0, 20.0
-    
+
     def prepare(
-        self, 
-        h: torch.Tensor, 
-        shingle_len: Optional[float] = None, 
-        shingle_hop: Optional[float] = None
+        self,
+        h: torch.Tensor,
+        shingle_len: Optional[float] = None,
+        shingle_hop: Optional[float] = None,
     ) -> torch.Tensor:
         """
         Prepare input data (pass-through since data is pre-processed).
-        
+
         Args:
-            h: Input embeddings, shape (batch_size, time, features) or 
+            h: Input embeddings, shape (batch_size, time, features) or
                 (batch_size, features)
             shingle_len: Shingle length (unused, for compatibility)
             shingle_hop: Shingle hop (unused, for compatibility)
-        
+
         Returns:
             Input tensor unchanged
-        
+
         Raises:
             AssertionError: If input is not 2D or 3D
         """
         assert h.ndim in [2, 3], f"Expected 2D or 3D input, got {h.shape}"
         return h
-    
+
     def embed(
-        self, 
-        h: torch.Tensor, 
-        attention_mask: Optional[torch.Tensor] = None
+        self, h: torch.Tensor, attention_mask: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, None]:
         """
         Extract embeddings using transformer pipeline.
-        
+
         Processes input through either:
         1. Averaged mode (use_avg_pooling=True): Simple MLP
         2. Temporal mode (use_avg_pooling=False): Full transformer pipeline
             - Optional convolutional downsampling
             - Linear projection to working dimension
+            - Optional CLS token prepending
             - Positional encoding
             - Transformer encoder
-            - Pooling
+            - CLS token extraction OR pooling
             - Final projection to embedding space
-        
+
         Args:
             h: Input embeddings
                 - 3D: (batch_size, time, features) for temporal processing
@@ -440,65 +462,71 @@ class Model(nn.Module):
                 - True: Valid position, False: Padding
                 - Ignored for 2D input
                 - Optional for 3D input
-        
+                - Automatically extended to include CLS token if use_cls_token=True
+
         Returns:
             Tuple containing:
                 - z: Output embeddings of shape (batch_size, zdim)
                 - extra: None (for compatibility with training framework)
-        
+
         Example:
-            >>> # Temporal embeddings
+            >>> # Temporal embeddings with pooling
             >>> h = torch.randn(4, 100, 1280)
             >>> mask = torch.ones(4, 100, dtype=torch.bool)
             >>> z, _ = model.embed(h, mask)
             >>> z.shape
             torch.Size([4, 256])
-            
+
+            >>> # Temporal embeddings with CLS token
+            >>> # (model must have use_cls_token=True)
+            >>> z_cls, _ = model_cls.embed(h, mask)
+            >>> z_cls.shape
+            torch.Size([4, 256])
+
             >>> # Averaged embeddings
             >>> h_avg = torch.randn(4, 1280)
             >>> z_avg, _ = model.embed(h_avg)
             >>> z_avg.shape
             torch.Size([4, 256])
         """
-        
+
         if self.use_avg_pooling:
             # AVERAGED EMBEDDINGS MODE: Use simple MLP
             if h.ndim == 3:
                 # If 3D, average across time dimension first
                 h = h.mean(dim=1)  # (B, T, D) -> (B, D)
-            
+
             z = self.avg_mlp(h)
             return z, None
-        
+
         else:
             # TEMPORAL PROCESSING MODE: Use full transformer pipeline
-            
+
             # Ensure 3D input
             if h.ndim == 2:
                 # (B, D) -> (B, 1, D) - treat as single timestep
                 h = h.unsqueeze(1)
-                if attention_mask is not None:
-                    attention_mask = torch.ones(
-                        h.shape[0], 1, 
-                        dtype=torch.bool, 
-                        device=h.device
-                    )
-            
+                # Always create correct mask for single-vector embeddings
+                # (ignore any mask from dataloader which may have wrong shape/values)
+                attention_mask = torch.ones(
+                    h.shape[0], 1, dtype=torch.bool, device=h.device
+                )
+
             # Apply ConvBlocks for temporal downsampling (if configured)
             if self.conf.conv_blocks:
                 x = h.transpose(1, 2)  # (B, D, T)
                 x = self.conv_layers(x)  # (B, D, T_downsampled)
                 x = x.transpose(1, 2)  # (B, T_downsampled, D)
-                
+
                 # Downsample attention mask to match
                 if attention_mask is not None:
                     mask_x = attention_mask.float()
                     for _ in range(self.conf.conv_blocks):
                         mask_x = F.max_pool1d(
-                            mask_x.unsqueeze(1), 
-                            kernel_size=self.conf.conv_kernel_size, 
+                            mask_x.unsqueeze(1),
+                            kernel_size=self.conf.conv_kernel_size,
                             stride=self.conf.conv_stride,
-                            padding=self.conf.conv_kernel_size // 2
+                            padding=self.conf.conv_kernel_size // 2,
                         ).squeeze(1)
                     attention_mask_down = mask_x > 0.5
                 else:
@@ -506,72 +534,99 @@ class Model(nn.Module):
             else:
                 x = h
                 attention_mask_down = attention_mask
-            
+
             # Linear projection: input_dim → working_dim
             x = self.pre_transformer_proj(x)
-            
+
+            # Add CLS token if enabled
+            if self.use_cls_token:
+                batch_size = x.shape[0]
+                # Expand CLS token for batch
+                cls_tokens = self.cls_token.expand(
+                    batch_size, -1, -1
+                )  # (B, 1, working_dim)
+                # Prepend CLS token to sequence
+                x = torch.cat([cls_tokens, x], dim=1)  # (B, 1+T, working_dim)
+
+                # Update attention mask to account for CLS token
+                if attention_mask_down is not None:
+                    # CLS token is always attended to (True)
+                    cls_mask = torch.ones(
+                        batch_size, 1, dtype=torch.bool, device=x.device
+                    )
+                    attention_mask_down = torch.cat(
+                        [cls_mask, attention_mask_down], dim=1
+                    )
+
             # Add positional encoding
             x = self.positional_encoding(x)
-            
+
             # Transformer encoding with attention mask
             if attention_mask_down is not None:
                 # PyTorch transformer uses inverted mask (True = ignore)
                 src_key_padding_mask = ~attention_mask_down
             else:
                 src_key_padding_mask = None
-                
+
             x = self.transformer(x, src_key_padding_mask=src_key_padding_mask)
-            
-            # Pool and project to final embedding space
-            x = x.transpose(1, 2)  # (B, working_dim, T_downsampled)
-            x = self.pool(x)  # (B, working_dim)
+
+            # Extract representation
+            if self.use_cls_token:
+                # Use CLS token representation (first token)
+                x = x[:, 0, :]  # (B, working_dim)
+            else:
+                # Use pooling as before
+                x = x.transpose(1, 2)  # (B, working_dim, T_downsampled)
+                x = self.pool(x)  # (B, working_dim)
+
+            # Final projection
             z = self.proj(x)  # (B, zdim)
-            
+
             return z, None
 
     def loss(
-        self, 
-        z_label: torch.Tensor, 
-        z_idx: torch.Tensor, 
-        z: torch.Tensor, 
-        extra: Optional[torch.Tensor] = None
+        self,
+        z_label: torch.Tensor,
+        z_idx: torch.Tensor,
+        z: torch.Tensor,
+        extra: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Compute contrastive loss.
-        
+
         Args:
             z_label: Clique labels of shape (batch_size,)
             z_idx: Version indices of shape (batch_size,)
             z: Embeddings of shape (batch_size, zdim)
             extra: Optional extra information (unused)
-        
+
         Returns:
             Loss scalar tensor
         """
         return self._loss_fn(z_label, z_idx, z, extra)
-    
+
     def distances(
-        self, 
-        q: torch.Tensor, 
-        c: torch.Tensor, 
-        qmask: Optional[torch.Tensor] = None, 
-        cmask: Optional[torch.Tensor] = None
+        self,
+        q: torch.Tensor,
+        c: torch.Tensor,
+        qmask: Optional[torch.Tensor] = None,
+        cmask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Compute pairwise cosine distances between queries and candidates.
-        
+
         Distance is computed as: dist = 1 - cosine_similarity
-        
+
         Args:
             q: Query embeddings of shape (num_queries, zdim)
             c: Candidate embeddings of shape (num_candidates, zdim)
             qmask: Optional mask for queries (unused, for compatibility)
             cmask: Optional mask for candidates (unused, for compatibility)
-        
+
         Returns:
             Distance matrix of shape (num_queries, num_candidates)
             where dist[i, j] = 1 - cosine_similarity(q[i], c[j])
-        
+
         Example:
             >>> q = torch.randn(10, 256)
             >>> c = torch.randn(100, 256)
@@ -584,26 +639,24 @@ class Model(nn.Module):
         sim = torch.mm(q_norm, c_norm.t())
         dist = 1 - sim
         return dist
-    
+
     def forward(
-        self, 
-        h: torch.Tensor, 
-        attention_mask: Optional[torch.Tensor] = None
+        self, h: torch.Tensor, attention_mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Full forward pass for inference.
-        
+
         Combines prepare() and embed() for end-to-end processing.
-        
+
         Args:
             h: Input embeddings
                 - 3D: (batch_size, time, features)
                 - 2D: (batch_size, features)
             attention_mask: Optional boolean mask of shape (batch_size, time)
-        
+
         Returns:
             Output embeddings of shape (batch_size, zdim)
-        
+
         Example:
             >>> x = torch.randn(4, 100, 1280)
             >>> z = model(x)
