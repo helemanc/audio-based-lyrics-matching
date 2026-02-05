@@ -1,0 +1,164 @@
+# ============================================================================
+# BASELINE EVALUATION CONFIG
+# ============================================================================
+# Computes transcription-based baselines for version identification:
+#   - SBERT (sentence-transformers)
+#   - TF-IDF (cosine and lucene variants)
+#   - Ideal (perfect clique matching)
+#   - Random
+#   - Modified Ideal (perfect matching only for valid transcriptions)
+#   - Modified Random (upper bound for transcription-based methods)
+#
+# USAGE:
+#   python scripts/compute_baselines.py \
+#       jobname=baselines_shs_test \
+#       conf=configs/evaluation/baselines.yaml \
+#       data.dataset_name=shs \
+#       data.split=test
+
+jobname: "baseline_evaluation"
+seed: 42
+
+# ============================================================================
+# PATHS
+# ============================================================================
+path:
+    # Base paths
+    cache: "/path/to/cache"
+    logs: "/path/to/logs"
+    working_dir: "/path/to/project"
+    data: "/path/to/data"
+    save_results_path: "logs/baselines" # Where to save results
+
+    # Dataset-specific paths (override based on dataset)
+    # SHS
+    shs_data: "/path/to/shs/shs_data.csv"
+    shs_splits: "/path/to/shs"
+
+    # Lyric-Covers
+    lyric_covers_data: "/path/to/lyric-covers"
+
+    # Discogs-VI
+    discogs_vi_data: "/path/to/discogs-vi"
+
+# ============================================================================
+# FABRIC (Distributed Computing)
+# ============================================================================
+fabric:
+    nnodes: 1 # Number of nodes
+    ngpus: 1 # GPUs (baselines typically don't need multi-GPU)
+    precision: "32" # Options: "32", "16-mixed", "bf16-mixed"
+
+# ============================================================================
+# PYTORCH BACKEND
+# ============================================================================
+pytorch:
+    cudnn_benchmark: false
+    cudnn_deterministic: true
+    float32_matmul_precision: "highest"
+    detect_anomaly: false
+
+# ============================================================================
+# DATA
+# ============================================================================
+data:
+    # Dataset selection
+    dataset_name: "shs" # Options: "shs", "lyric-covers", "discogs-vi"
+    split: "test" # Options: "train", "val", "test"
+
+    # Audio settings (for loading transcriptions)
+    whisper_set: "large-v2" # Whisper model used: "large-v2", "large-v3", etc.
+
+    # Dataloader settings
+    batch_size: 32 # Batch size for loading data
+    nworkers: 4 # Number of dataloader workers
+
+    # Evaluation mode
+    evaluation_mode: true # Set to true for evaluation
+
+    # Optional debugging
+    debug_num_cliques: null # Set to int to limit number of cliques (for testing)
+
+    # Audio duration (not critical for baseline evaluation)
+    enforce_max_duration: false
+    max_duration_seconds: 300
+
+# ============================================================================
+# BASELINE CONFIGURATION
+# ============================================================================
+baselines:
+    # Which baselines to compute
+    # Available: sbert, tfidf-cosine, tfidf-lucene, ideal, random,
+    #            modified_ideal, modified-random
+    compute:
+        - sbert
+        - tfidf-cosine
+        - tfidf-lucene
+        - ideal
+        - random
+        - modified_ideal
+        - modified-random
+
+    # SBERT settings
+    sbert:
+        model_name: "all-MiniLM-L6-v2" # Sentence transformer model
+        batch_size: 64 # Encoding batch size
+        encode_chunk_size: 1000 # Process embeddings in chunks
+        similarity_chunk_size: 1000 # Similarity computation chunk size
+
+    # TF-IDF settings
+    tfidf:
+        method: "both" # Options: "cosine", "lucene", "both"
+        top_k: 100 # Top-k filtering (as in paper)
+        compute_all_variants: true # Compute both filtered and unfiltered
+
+        # TF-IDF vectorizer parameters
+        max_query_terms: 12 # Max terms for Lucene-style query
+        min_term_freq: 1 # Minimum term frequency
+        min_doc_freq: 2 # Minimum document frequency
+
+# ============================================================================
+# REPORTING
+# ============================================================================
+reporting:
+    confidence_level: 0.95 # Confidence level for CI calculation
+    save_detailed_results: true # Save full result tensors
+    print_detailed_stats: true # Print per-baseline statistics
+    print_comparison_table: true # Print comparison table
+    print_tfidf_analysis: true # Print TF-IDF filtering analysis
+
+
+# ============================================================================
+# USAGE EXAMPLES
+# ============================================================================
+#
+# 1. Evaluate baselines on SHS test set:
+#    python scripts/compute_baselines.py \
+#        jobname=shs_test_baselines \
+#        conf=configs/evaluation/baselines.yaml \
+#        data.dataset_name=shs \
+#        data.split=test \
+#        path.shs_data=/path/to/shs/shs_data.csv \
+#        path.shs_splits=/path/to/shs
+#
+# 2. Evaluate on Lyric-Covers validation set:
+#    python scripts/compute_baselines.py \
+#        jobname=lyric_covers_val_baselines \
+#        conf=configs/evaluation/baselines.yaml \
+#        data.dataset_name=lyric-covers \
+#        data.split=val \
+#        path.lyric_covers_data=/path/to/lyric-covers
+#
+# 3. Quick test with limited data:
+#    python scripts/compute_baselines.py \
+#        jobname=debug_baselines \
+#        conf=configs/evaluation/baselines.yaml \
+#        data.debug_num_cliques=10 \
+#        baselines.compute=[sbert,ideal,random]
+#
+# 4. Only compute TF-IDF baselines:
+#    python scripts/compute_baselines.py \
+#        jobname=tfidf_only \
+#        conf=configs/evaluation/baselines.yaml \
+#        baselines.compute=[tfidf-cosine,tfidf-lucene]
+#
