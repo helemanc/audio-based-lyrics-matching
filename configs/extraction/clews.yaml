@@ -1,54 +1,113 @@
 # ============================================================================
-# CLEWS FEATURE EXTRACTION - UNIFIED CONFIG
+# CLEWS FEATURE EXTRACTION CONFIGURATION
 # ============================================================================
-# Works for: SHS, Discogs-VI
+#
+# CLEWS (Contrastive Learning of Musical Embeddings with Weak Supervision)
+# extracts audio embeddings using shingle-based processing.
+#
+# IMPORTANT: CLEWS requires a SEPARATE Python environment!
+# See README.md for installation instructions.
+#
+# Requirements:
+#   1. Clone CLEWS: git clone https://github.com/helemanc/clews.git
+#   2. Create env: conda create -n clews python=3.11 && conda activate clews
+#   3. Install: pip install -r clews/requirements.txt
+#
+# Supported datasets: SHS100K (shs), Discogs-VI (discogs-vi)
+# ============================================================================
 
 jobname: "clews_extraction"
 seed: 42
 
-maxlen: 600
-qslen: null
-qshop: 5
-cslen: null
-cshop: 5
-redux: null
-limit_num: null
+# ----------------------------------------------------------------------------
+# Shingle Parameters (matching CLEWS distance matrix computation)
+# ----------------------------------------------------------------------------
+maxlen: 300 # Maximum audio length in seconds (5 minutes)
+qslen: null # Query shingle length (null = use model default)
+qshop: 5 # Query shingle hop in seconds
+cslen: null # Candidate shingle length (null = use model default)
+cshop: 5 # Candidate shingle hop in seconds
+redux: null # Distance reduction method (not used in extraction)
+limit_num: null # Limit number of files to process (null = all)
 
+# ----------------------------------------------------------------------------
+# Paths - UPDATE THESE FOR YOUR SETUP
+# ----------------------------------------------------------------------------
 path:
-  data: "/path/to/data"
-  save_data_path: "/path/to/data"
-  clews_cache_dir: "/path/to/cache-clews"
-  clews_audio_dir: "/path/to/audio"
-  transcription_folder: null
-  hidden_states_folder: null
+    # Data paths
+    data: "/path/to/audio/data"
+    save_data_path: "/path/to/save/embeddings"
 
+    # CLEWS-specific paths
+    # IMPORTANT: Run data_preproc.py first to create metadata files!
+    # Example: python data_preproc.py --dataset=SHS100K --fn_out=/path/to/clews-cache/metadata-shs.pt
+    clews_cache_dir: "/path/to/clews-cache" # Contains metadata-shs.pt or metadata-dvi.pt
+    clews_audio_dir: "/path/to/audio" # Audio files location
+
+    # Optional: Specify if different from defaults
+    transcription_folder: null
+    hidden_states_folder: null
+
+    # Dataset-specific paths (add as needed)
+    # For SHS100K:
+    # shs_data: "/path/to/datasets/shs/shs_data.csv"
+    # shs_splits: "/path/to/datasets/shs"
+    #
+    # For Discogs-VI:
+    # discogs_vi_data: "/path/to/datasets/discogs-vi"
+
+# ----------------------------------------------------------------------------
+# CLEWS Configuration
+# ----------------------------------------------------------------------------
 clews:
-  project_dir: "/path/to/clews"
-  config_path: null  # Auto-download
-  checkpoint_path: null  # Auto-download
-  language: null  # For output file suffix (not related to audio language)
+    # Path to cloned CLEWS repository (REQUIRED)
+    # Clone from: https://github.com/helemanc/clews
+    project_dir: "/path/to/clews"
 
+    # CLEWS model paths (null = auto-download from Zenodo)
+    config_path: null
+    checkpoint_path: "/path/to/clews_checkpoints"
+
+    # Output file language suffix (optional)
+    # Set to "en" to create hs_clews_en.pt instead of hs_clews.pt
+    language: null
+
+# ----------------------------------------------------------------------------
+# Fabric (Distributed Training) Configuration
+# ----------------------------------------------------------------------------
 fabric:
-  nnodes: 1
-  ngpus: 4
-  precision: "32"
+    nnodes: 1
+    ngpus: 4
+    precision: "32" # CLEWS uses fp32 for extraction
 
+# ----------------------------------------------------------------------------
+# PyTorch Configuration
+# ----------------------------------------------------------------------------
 pytorch:
-  cudnn_benchmark: false
-  cudnn_deterministic: false
-  float32_matmul_precision: "medium"
-  detect_anomaly: false
+    cudnn_benchmark: false
+    cudnn_deterministic: false
+    float32_matmul_precision: "medium"
+    detect_anomaly: false
 
+# ----------------------------------------------------------------------------
+# Data Configuration
+# ----------------------------------------------------------------------------
 data:
-  dataset_name: "shs"  # "shs" or "discogs-vi"
-  split: "val"
-  batch_size: 2
-  nworkers: 16
+    dataset_name: "shs" # Options: "shs", "discogs-vi"
+    split: "test" # Options: "train", "val", "test"
+    batch_size: 2 # Batch size per GPU
+    nworkers: 16 # DataLoader workers per GPU
 
+# ----------------------------------------------------------------------------
+# Extraction Configuration
+# ----------------------------------------------------------------------------
 extraction:
-  type: "clews"
-  skip_existing: true
+    type: "clews"
+    skip_existing: true # Skip files that already have embeddings
 
+# ----------------------------------------------------------------------------
+# Evaluation Configuration (Optional)
+# ----------------------------------------------------------------------------
 evaluation:
-  run_evaluation: false
-  distances: ["cosine", "euclidean"]
+    run_evaluation: false
+    distances: ["cosine", "euclidean"]
