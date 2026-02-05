@@ -1,5 +1,39 @@
+"""
+Distance functions for embedding similarity computation.
+
+Provides efficient pairwise distance calculations between embedding matrices,
+commonly used in version identification and retrieval tasks.
+"""
+
 import torch
-def pairwise_euclidean_distance_matrix(x, y, squared=False, eps=1e-6):
+
+
+def pairwise_euclidean_distance_matrix(
+    x: torch.Tensor, y: torch.Tensor, squared: bool = False, eps: float = 1e-6
+) -> torch.Tensor:
+    """
+    Compute pairwise Euclidean distances between two sets of embeddings.
+
+    Uses the efficient matrix formulation:
+    ||x - y||^2 = ||x||^2 + ||y||^2 - 2*x^T*y
+
+    Args:
+        x: First embedding matrix, shape (N, D)
+        y: Second embedding matrix, shape (M, D)
+        squared: If True, return squared distances. If False, return Euclidean distances
+        eps: Small epsilon for numerical stability in sqrt operation
+
+    Returns:
+        Distance matrix of shape (N, M) where element (i,j) is the distance
+        between x[i] and y[j]
+
+    Example:
+        >>> embeddings1 = torch.randn(100, 128)
+        >>> embeddings2 = torch.randn(200, 128)
+        >>> distances = pairwise_euclidean_distance_matrix(embeddings1, embeddings2)
+        >>> distances.shape
+        torch.Size([100, 200])
+    """
     squared_x = x.pow(2).sum(1).view(-1, 1)
     squared_y = y.pow(2).sum(1).view(1, -1)
     dot_product = torch.mm(x, y.t())
@@ -20,7 +54,34 @@ def pairwise_euclidean_distance_matrix(x, y, squared=False, eps=1e-6):
     return distance_matrix
 
 
-def pairwise_cosine_distance_matrix(x, y, eps=1e-6):
+def pairwise_cosine_distance_matrix(
+    x: torch.Tensor, y: torch.Tensor, eps: float = 1e-6
+) -> torch.Tensor:
+    """
+    Compute pairwise cosine distances between two sets of embeddings.
+
+    Cosine distance is defined as: 1 - cosine_similarity
+    where cosine_similarity = (x · y) / (||x|| * ||y||)
+
+    Args:
+        x: First embedding matrix, shape (N, D)
+        y: Second embedding matrix, shape (M, D)
+        eps: Small epsilon for numerical stability in normalization
+
+    Returns:
+        Distance matrix of shape (N, M) where element (i,j) is the cosine
+        distance between x[i] and y[j]. Values range from 0 (identical) to 2
+        (opposite directions)
+
+    Example:
+        >>> queries = torch.randn(50, 256)
+        >>> candidates = torch.randn(1000, 256)
+        >>> distances = pairwise_cosine_distance_matrix(queries, candidates)
+        >>> distances.shape
+        torch.Size([50, 1000])
+        >>> # Find nearest neighbor for each query
+        >>> nearest = distances.argmin(dim=1)
+    """
     # Normalize x and y to unit vectors (L2 normalization)
     x_norm = x / (x.norm(dim=1, keepdim=True) + eps)
     y_norm = y / (y.norm(dim=1, keepdim=True) + eps)
