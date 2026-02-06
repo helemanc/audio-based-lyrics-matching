@@ -213,3 +213,5 @@ cache/
 scripts/download
 trash/
 logs/
+docs/
+datasets/lyric-covers/README.md
