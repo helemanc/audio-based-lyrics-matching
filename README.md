@@ -9,21 +9,6 @@ This repository accompanies the paper:
 by *Eleonora Mancini, Joan Serrà, Paolo Torroni, and Yuki Mitsufuji*
 [[📄 Read the paper on arXiv](https://arxiv.org/abs/2510.08176v1)]
 
----
-
-<div align="center" style="border: 2px solid #27ae60; border-radius: 10px; padding: 15px; background-color: #e8f8f5;">
-
-🎵
-<h3><b>Complete Implementation Released</b></h3>
-<p>This repository provides a <b>fully functional and tested</b> implementation of <b>WEALY</b><br>
-(Whisper Embeddings for Audio-based LYrics matching) for version identification.</p>
-<p><b>Features:</b> Whisper/SBERT/CLEWS extraction • Training • Inference • Multimodal fusion • Baseline evaluation<br>
-<b>Pre-trained models:</b> 8 models available on <a href="https://huggingface.co/audio-based-lyrics-matching">Hugging Face Hub</a></p>
-
-</div>
-
----
-
 ## 🧠 About the Project  
 
 This project introduces **WEALY** — **W**hisper **E**mbeddings for **A**udio-based **LY**rics matching — a fully reproducible pipeline that leverages Whisper decoder embeddings for **audio-based lyrics matching**.
