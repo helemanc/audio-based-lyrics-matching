@@ -31,7 +31,52 @@ This project introduces **WEALY** — **W**hisper **E**mbeddings for **A**udio-b
 **WEALY** establishes transparent and reproducible baselines for version identification using:
 - Pre-extracted Whisper decoder embeddings (hidden states)
 - Learned transformer based model with contrastive learning
-- Support for multiple datasets (SHS100K, Discogs-VI, Lyric Covers)
+- Support for multiple datasets (SHS100K, Discogs-VI, LyricCovers)
+
+### ✨ Key Features
+
+<table>
+<tr>
+<td width="50%">
+
+**🎤 Multi-Modal Feature Extraction**
+- **Whisper** decoder embeddings (auto-language & English)
+- **SBERT** text embeddings from transcriptions
+- **CLEWS** audio embeddings
+- Efficient caching and distributed processing
+
+</td>
+<td width="50%">
+
+**🚀 Training & Inference**
+- Transformer-based contrastive learning
+- Multi-GPU distributed training (Lightning Fabric)
+- Overlapping chunks for robust evaluation
+- Automatic checkpointing and recovery
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**📊 Comprehensive Evaluation**
+- Standard metrics: MAP, MR1, ARP
+- Transcription baselines: SBERT, TF-IDF
+- Theoretical bounds: Ideal, Random, Modified variants
+- Multimodal fusion with grid search
+
+</td>
+<td width="50%">
+
+**🤗 Pre-trained Models**
+- **8 models** on [Hugging Face Hub](https://huggingface.co/audio-based-lyrics-matching)
+- SHS100K, Discogs-VI, Lyric Covers datasets
+- Auto-download with cached inference
+- Ready for immediate evaluation
+
+</td>
+</tr>
+</table>
 
 ### ⚡ Built for Scale
 
@@ -172,13 +217,13 @@ We support three datasets for version identification research:
 |---------|---------|----------|--------|-----------------|
 | **SHS100K** | ~10K | ~100K | Standard | 82% (YouTube) |
 | **Discogs-VI-YT** | ~98K | ~493K | Standard | Full |
-| **Lyric Covers 2.0** | ~24K | ~54K | Custom | Full |
+| **LyricCovers 2.0** | ~24K | ~54K | Custom | Full |
 
 **Dataset Properties**:
 - All audio processed at **16 kHz mono** with **5-minute maximum length**
 - **SHS100K-v2**: Established benchmark; YouTube dependencies limited collection to 82%
 - **Discogs-VI-YT**: YouTube-available subset (~493K versions, ~98K cliques); addresses SHS limitations
-- **Lyric Covers 2.0**: Deduplicated version (54,301 covers, 24,561 originals, 80 languages)
+- **LyricCovers 2.0**: Deduplicated version (54,301 covers, 24,561 originals, 80 languages)
 
 ### Directory Structure
 
@@ -203,6 +248,37 @@ Place all datasets in your data directory:
 ### Dataset Metadata
 
 Required metadata files are in `datasets/`.
+
+### Lyric Covers Dataset Preparation
+
+⚠️ **Note**: The Lyric Covers dataset requires manual preparation. Metadata is provided in `datasets/lyric-covers/data.csv`.
+
+**Expected Directory Structure**:
+```
+/path/to/data/LyricCovers/
+├── 1001/
+│   ├── 1001_lyrics.txt
+│   └── 1001_audio.mp3
+├── 1002/
+│   ├── 1002_lyrics.txt
+│   └── 1002_audio.mp3
+└── ...
+```
+
+**Audio Format Requirements**:
+- **Format**: MP3
+- **Channels**: Mono
+- **Sample rate**: 16 kHz
+- **Naming**: `{song_id}_audio.mp3`
+
+**Lyrics Format Requirements**:
+- **Format**: Plain text (.txt)
+- **Encoding**: UTF-8
+- **Naming**: `{song_id}_lyrics.txt`
+- **Content**: Full lyrics text
+
+**Data Preparation**:
+After obtaining the audio files, resample them to **16 kHz mono MP3** format and organize them following the directory structure above.
 
 
 ### Caching
@@ -262,30 +338,13 @@ python scripts/feature_extraction.py \
     jobname=<JOB_NAME> \
     conf=configs/extraction/whisper.yaml \
     data.dataset_name=<DATASET_NAME> \
+    data.split=<SPLIT> \
     path.data=<PATH_TO_AUDIO_DATA> \
+    path.base_path=<PATH_TO_BASE> \ 
     path.save_data_path=<PATH_TO_SAVE_EMBEDDINGS> \
     path.working_dir=<PATH_TO_PROJECT> \
-    path.cache=<PATH_TO_CACHE> \
     fabric.ngpus=<NUM_GPUS> \
     fabric.precision=<PRECISION>
-```
-
-**Dataset-Specific Parameters:**
-
-For **SHS100K**, add:
-```bash
-    path.shs_data=<PATH_TO_DATASETS>/shs/shs_data.csv \
-    path.shs_splits=<PATH_TO_DATASETS>/shs
-```
-
-For **Lyric-Covers**, add:
-```bash
-    path.lyric_covers_data=<PATH_TO_DATASETS>/lyric-covers
-```
-
-For **Discogs-VI**, add:
-```bash
-    path.discogs_vi_data=<PATH_TO_DATASETS>/discogs-vi
 ```
 
 **Common Parameters:**
@@ -296,7 +355,9 @@ For **Discogs-VI**, add:
   - `last_hidden_states_en`: Force English
   - `encoder`: Whisper encoder embeddings
 - `path.data`: Root directory with audio files
+- `path.base_path`: Base path for dataset-specific parameters (`<PATH_TO_WORKING_DIR>/datasets`)
 - `path.save_data_path`: Where to save extracted embeddings
+- `path.working_dir`: Working directory (`<PATH_TO_WORKING_DIR>/audio-based-lyrics-matching`)
 - `fabric.ngpus`: Number of GPUs (recommended: 4-8 for faster extraction)
 - `fabric.precision`: Computation precision (`bf16-mixed` for speed, `32` for accuracy)
 
@@ -324,6 +385,9 @@ python scripts/feature_extraction.py \
     jobname=<JOB_NAME> \
     conf=configs/extraction/sbert.yaml \
     data.dataset_name=<DATASET_NAME> \
+    data.split=<SPLIT_NAME> \
+    path.base_path=<PATH_TO_WORKING_DIR>/datasets \
+    path.working_dir=<PATH_TO_WORKING_DIR>/audio-based-lyrics-matching \
     path.data=<PATH_TO_AUDIO_DATA> \
     path.save_data_path=<PATH_TO_SAVE_EMBEDDINGS> \
     path.transcriptions=<PATH_TO_WHISPER_TRANSCRIPTIONS> \
@@ -447,6 +511,8 @@ python scripts/train.py \
     jobname=<EXPERIMENT_NAME> \
     conf=configs/training/wealy.yaml \
     data.dataset_name=<DATASET_NAME> \
+    training.batch_size=<BATCH_SIZE> \
+    training.numepochs=<NUM_EPOCHS> \
     path.cache=<PATH_TO_CACHE> \
     path.logs=<PATH_TO_LOGS> \
     path.working_dir=<PATH_TO_PROJECT> \
@@ -466,7 +532,7 @@ For **SHS100K**, add:
     path.shs_splits=<PATH_TO_DATASETS>/shs
 ```
 
-For **Lyric-Covers**, add:
+For **LyricCovers**, add:
 ```bash
     path.lyric_covers_data=<PATH_TO_DATASETS>/lyric-covers
 ```
@@ -515,7 +581,7 @@ python scripts/train.py \
 
 **Expected Training Time** (4 GPUs):
 - SHS100K: ~24-48 hours
-- Lyric-Covers: ~12-24 hours
+- LyricCovers: ~12-24 hours
 - Discogs-VI: ~48-72 hours
 
 ---
@@ -532,11 +598,15 @@ The inference script supports **two ways to load models**:
 
 ```bash
 python scripts/inference.py \
-    checkpoint=logs/wealy_whisper_shs/best.ckpt \
-    hidden_states=/path/to/hidden-states \
+    checkpoint=logs/wealy-whisper-shs/checkpoint_best.ckpt \
     partition=test \
+    chunk_size=1500 \
+    overlap_percentage=0.9 \
+    topk_distance=1 \
     use_overlapping_chunks=true \
-    ngpus=4
+    hidden_states=/path/to/hidden-states \
+    ngpus=4 \
+    disable_memory_logging=true
 ```
 
 #### Option B: Using Hugging Face Models (Recommended)
@@ -582,10 +652,10 @@ Since models downloaded from HuggingFace have sanitized configurations (personal
     data=/path/to/data
 ```
 
-**For Lyric Covers models** (`wealy-*-lyc`):
+**For LyricCovers models** (`wealy-*-lyc`):
 ```bash
     hidden_states=/path/to/LyricCovers-hidden-states \
-    lyric_covers_data=/path/to/datasets/lyric_covers \
+    lyric_covers_data=/path/to/datasets/lyric-covers \
     cache=/path/to/cache \
     data=/path/to/data
 ```
@@ -593,7 +663,7 @@ Since models downloaded from HuggingFace have sanitized configurations (personal
 **For Discogs-VI models** (`wealy-*-dvi`):
 ```bash
     hidden_states=/path/to/DiscogsVI-hidden-states \
-    discogs_vi_data=/path/to/datasets/discogs_vi \
+    discogs_vi_data=/path/to/datasets/discogs-vi \
     cache=/path/to/cache \
     data=/path/to/data
 ```
@@ -795,19 +865,27 @@ python scripts/train.py \
 
 # 4. Compute CLEWS distance matrix (requires CLEWS preprocessing)
 # (CLEWS distances are typically pre-computed during CLEWS workflow)
+python path/to/clews/compute_distance_matrix.py \
+    checkpoint_dir=/path/to/clews/checkpoints \
+    dataset=shs \
+    output_dir=/path/to/audio-based-lyrics-matching/logs/clews-shs/distance_matrix \
+    path_meta=/path/to/cache/clews/metadata-shs.pt \
+    path_audio=/path/to/data/SHS100K/audio/ \
+    partition=test \
+    ngpus=4
 
 # 5. Compute WEALY distance matrix
 python scripts/compute_distance_matrix.py \
     checkpoint=logs/wealy_shs/best.ckpt \
     partition=test \
-    save_distance_matrix=distances/wealy_shs_test.pkl
+    save_distance_matrix=/path/to/audio-based-lyrics-matching/logs/wealy-whisper-shs/distance_matrix \
 
 # 6. Find optimal fusion
 python scripts/multimodal_fusion.py \
-    --matrix1 distances/clews_shs_test.pkl \
-    --matrix2 distances/wealy_shs_test.pkl \
+    --matrix1 /path/to/audio-based-lyrics-matching/logs/clews-shs/clews_shs_test.pkl \
+    --matrix2 /path/to/audio-based-lyrics-matching/logs/wealy-whisper-shs/distance_matrix/wealy_shs_test.pkl \
     --alpha_range 0.0 2.5 0.1 \
-    --output fusion_results.csv
+    --output /path/to/audio-based-lyrics-matching/logs/fusion-wealy-clews/fusion_results.csv
 ```
 
 ---
@@ -913,8 +991,8 @@ We provide **8 pre-trained WEALY models** on [Hugging Face Hub](https://huggingf
 | `wealy-whisper-en-shs` | SHS100K | Whisper (English) | [audio-based-lyrics-matching/wealy-whisper-en-shs](https://huggingface.co/audio-based-lyrics-matching/wealy-whisper-en-shs) |
 | `wealy-avgembmlp-shs` | SHS100K | Avg Embedding MLP | [audio-based-lyrics-matching/wealy-avgembmlp-shs](https://huggingface.co/audio-based-lyrics-matching/wealy-avgembmlp-shs) |
 | `wealy-cls-shs` | SHS100K | CLS Token | [audio-based-lyrics-matching/wealy-cls-shs](https://huggingface.co/audio-based-lyrics-matching/wealy-cls-shs) |
-| `wealy-whisper-lyc` | Lyric Covers | Whisper (auto-lang) | [audio-based-lyrics-matching/wealy-whisper-lyc](https://huggingface.co/audio-based-lyrics-matching/wealy-whisper-lyc) |
-| `wealy-sbert-lyc` | Lyric Covers | SBERT | [audio-based-lyrics-matching/wealy-sbert-lyc](https://huggingface.co/audio-based-lyrics-matching/wealy-sbert-lyc) |
+| `wealy-whisper-lyc` | LyricCovers | Whisper (auto-lang) | [audio-based-lyrics-matching/wealy-whisper-lyc](https://huggingface.co/audio-based-lyrics-matching/wealy-whisper-lyc) |
+| `wealy-sbert-lyc` | LyricCovers | SBERT | [audio-based-lyrics-matching/wealy-sbert-lyc](https://huggingface.co/audio-based-lyrics-matching/wealy-sbert-lyc) |
 | `wealy-whisper-dvi` | Discogs-VI | Whisper (auto-lang) | [audio-based-lyrics-matching/wealy-whisper-dvi](https://huggingface.co/audio-based-lyrics-matching/wealy-whisper-dvi) |
 
 ### Quick Start Examples
@@ -933,12 +1011,12 @@ torchrun --nproc_per_node=4 --standalone scripts/inference.py \
     ngpus=4
 ```
 
-**Lyric Covers model:**
+**LyricCovers model:**
 ```bash
 torchrun --nproc_per_node=4 --standalone scripts/inference.py \
     model_name=wealy-whisper-lyc \
     hidden_states=/path/to/LyricCovers-hidden-states \
-    lyric_covers_data=/path/to/datasets/lyric_covers \
+    lyric_covers_data=/path/to/datasets/lyric-covers \
     cache=/path/to/cache \
     data=/path/to/data \
     partition=test \
@@ -951,7 +1029,7 @@ torchrun --nproc_per_node=4 --standalone scripts/inference.py \
 torchrun --nproc_per_node=4 --standalone scripts/inference.py \
     model_name=wealy-whisper-dvi \
     hidden_states=/path/to/DiscogsVI-hidden-states \
-    discogs_vi_data=/path/to/datasets/discogs_vi \
+    discogs_vi_data=/path/to/datasets/discogs-vi \
     cache=/path/to/cache \
     data=/path/to/data \
     partition=test \
@@ -1034,7 +1112,7 @@ audio-based-lyrics-matching/
 │   │   ├── DiscogsVI-YT-20240701-light.json.val    # Validation split
 │   │   └── DiscogsVI-YT-20240701-light.json.test   # Test split
 │   └── lyric-covers/
-│       ├── data.csv                # Lyric Covers metadata
+│       ├── data.csv                # LyricCovers metadata
 │       ├── train_no_dup.csv        # Train split
 │       ├── val_no_dup.csv          # Validation split
 │       └── test_no_dup.csv         # Test split
@@ -1142,7 +1220,7 @@ If you use this code in your research, please cite our paper:
 ## Contact
 
 For questions or issues:
-- **Open an issue**: [GitHub Issues](https://github.com/yourusername/audio-based-lyrics-matching/issues)
+- **Open an issue**: [GitHub Issues](https://github.com/helemanc/audio-based-lyrics-matching/issues)
 - **Email**: e.mancini@unibo.it
 
 
