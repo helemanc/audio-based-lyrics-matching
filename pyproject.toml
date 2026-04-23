@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-# Adjust the CUDA version in the index URL to match your system (e.g. cu118, cu121, cu124)
+# Linux (HPC): pulls CUDA-enabled torch; adjust cu124 to match your cluster's CUDA version
 torch = [
     { index = "pytorch-cuda", marker = "sys_platform == 'linux'" },
 ]
@@ -33,3 +33,7 @@ torchaudio = [
 name = "pytorch-cuda"
 url = "https://download.pytorch.org/whl/cu124"
 explicit = true
+
+[tool.uv]
+# On Linux/HPC, redirect cache to scratch to avoid home directory quota
+# Run: UV_CACHE_DIR=/scratch.hpc/.../cache uv sync
