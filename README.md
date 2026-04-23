@@ -105,36 +105,60 @@ All scripts support distributed execution across multiple GPUs, making them suit
 - FFmpeg (for audio processing)
 - ~1TB disk space (for datasets and embeddings)
 - HPC environment (optional, but recommended for large-scale experiments)
+- [uv](https://github.com/astral-sh/uv) package manager
 
-### Step 1: Create Environment
-```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate 
-```
-### Step 2: Install Modified Whisper (Required)
-
-⚠️ **Important**: This project uses a modified version of Whisper to extract hidden states.
+### Step 1: Install uv
 
 ```bash
-# Install from GitHub
-pip install git+https://github.com/helemanc/whisper.git
-
-# Or force reinstall if already present
-pip install --force-reinstall git+https://github.com/helemanc/whisper.git
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-For details about this fork, see: https://github.com/helemanc/whisper
+Or via pip:
+```bash
+pip install uv
+```
 
-### Step 3: Install Project Dependencies
+### Step 2: Clone and Set Up the Environment
+
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/audio-based-lyrics-matching.git
+git clone https://github.com/helemanc/audio-based-lyrics-matching.git
 cd audio-based-lyrics-matching
 
-# Install dependencies
-pip install -r requirements.txt
+# Create virtual environment and install all dependencies
+uv sync
 ```
+
+`uv sync` reads `pyproject.toml`, resolves all dependencies (including the modified Whisper fork), and installs them into a local `.venv`. A `uv.lock` lockfile is generated automatically for fully reproducible installs.
+
+#### CUDA Version
+
+By default, `pyproject.toml` uses the `cu124` PyTorch index. Adjust the index URL to match your system's CUDA version:
+
+```toml
+# pyproject.toml — change cu124 to your CUDA version (e.g. cu118, cu121)
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu124"
+```
+
+Then re-run `uv sync` to reinstall with the correct build.
+
+#### Activate the environment
+
+```bash
+source .venv/bin/activate
+```
+
+#### Reproducible installs (e.g. on HPC nodes)
+
+Once `uv.lock` is committed, any node can reproduce the exact environment with:
+
+```bash
+uv sync --frozen
+```
+
+> **Modified Whisper**: The custom Whisper fork (`git+https://github.com/helemanc/whisper.git`) is declared directly in `pyproject.toml` and installed automatically by `uv sync` — no manual step required. For details about this fork, see: https://github.com/helemanc/whisper
 
 ### ⚠️ CLEWS Extraction (Separate Environment Required)
 
