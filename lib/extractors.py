@@ -28,8 +28,8 @@ from utils.clews_utils import (
     load_clews_model,
     save_clews_averaged_embedding,
     save_clews_embeddings,
-    get_save_path_for_dataset,
 )
+from utils.latents_extraction_utils import get_save_path_for_dataset
 from utils.clews_utils import (
     auto_setup_clews_paths,
     load_clews_model,
