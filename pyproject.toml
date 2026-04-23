@@ -17,7 +17,7 @@ dependencies = [
     "nltk",
     "tqdm",
     "pyyaml",
-    "whisper @ git+https://github.com/helemanc/whisper.git",
+    "openai-whisper @ git+https://github.com/helemanc/whisper.git",
 ]
 
 [tool.uv.sources]
