@@ -1,0 +1,35 @@
+[project]
+name = "audio-based-lyrics-matching"
+version = "0.1.0"
+description = "WEALY: Whisper Embeddings for Audio-based Lyrics Matching"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.0",
+    "torchaudio",
+    "torchinfo",
+    "lightning",
+    "omegaconf",
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "sentence-transformers",
+    "einops",
+    "nltk",
+    "tqdm",
+    "pyyaml",
+    "whisper @ git+https://github.com/helemanc/whisper.git",
+]
+
+[tool.uv.sources]
+# Adjust the CUDA version in the index URL to match your system (e.g. cu118, cu121, cu124)
+torch = [
+    { index = "pytorch-cuda", marker = "sys_platform == 'linux'" },
+]
+torchaudio = [
+    { index = "pytorch-cuda", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
